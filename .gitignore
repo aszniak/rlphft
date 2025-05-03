@@ -172,3 +172,24 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Image files
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Audio files
+*.wav
+*.mp3
+*.aac
+*.flac
+
+# Data files
+*.csv
+*.json
+*.pkl
+*.pickle
+*.pickle.gz
+*.pickle.bz2
+*.pickle.zip
