@@ -58,56 +58,38 @@ If you need to install or update packages, use:
 
 ## Features
 
-- Fetch real-time cryptocurrency price data
-- Retrieve historical candlestick (OHLCV) data
-- Get 24-hour market statistics
-- Public API access (no authentication required)
-- Statistical analysis of price randomness
-- Compare real data against synthetic benchmarks
-- Framework for adding trading strategies
+- Fetch real-time cryptocurrency price data from Binance
+- Retrieve historical candlestick (OHLCV) data for multiple major cryptocurrencies
+- Calculate over 30 technical indicators for market analysis
+- Normalize data for machine learning applications
+- Visualize price data with technical indicators
+- Detect potential market inefficiencies (e.g., volume spikes, gaps, divergences)
+- Framework for developing RL-based trading strategies
 
-## Analysis Features
+## Reinforcement Learning Approach
 
-### Signal Randomness Analysis
+This project aims to develop RL agents that can:
 
-This project includes a comprehensive suite of statistical tests to determine whether cryptocurrency price movements exhibit randomness or contain patterns:
+1. **Detect Market Inefficiencies**: Use technical indicators to identify potential trading opportunities
+2. **Learn Optimal Strategies**: Optimize entry/exit points and position sizing
+3. **Adapt to Market Conditions**: Dynamically adjust to changing market regimes
 
-- **Basic Statistics**: Mean, standard deviation, skewness, kurtosis
-- **Autocorrelation Tests**: Ljung-Box test for serial correlation
-- **Runs Test**: Tests for randomness in the sequence of price changes
-- **Stationarity Tests**: ADF and KPSS tests to check for unit roots and stationarity
-
-### Synthetic Data Comparison
-
-The analysis includes comparison of real cryptocurrency data against two synthetic datasets:
-
-1. **Pure Random**: Generated from Gaussian noise
-2. **Sinusoidal Pattern**: Contains a 10-point cycle plus noise
-
-This comparison helps identify whether real price movements behave more like random noise or contain detectable patterns.
-
-### Visualization
-
-The project generates several visualization outputs:
-
-- Price and returns time series plots
-- Returns distribution histograms
-- Autocorrelation and partial autocorrelation plots
-- Q-Q plots for normality assessment
-- Heatmaps of statistical test results
+The RL environment will be built on top of the data processing pipeline, using preprocessed and normalized technical indicators as input features.
 
 ## Authentication
 
-The current version works with public endpoints only. To access account data and trading functionality:
+This project uses SSH key-based authentication for Binance API access instead of traditional API key/secret pairs:
 
-1. Create an account on [Binance](https://www.binance.com/)
-2. Go to API Management in your account settings
-3. Create a new API key with appropriate permissions
-4. Copy `config.env.example` to `config.env` and update the `API_KEY` and `API_SECRET` variables
+1. The system utilizes Ed25519 SSH keys for request signing
+2. The SSH key from `~/.ssh/id_ed25519` is used by default
+3. The API key is configured in the `config.env` file which is gitignored
+
+This approach provides enhanced security compared to standard API key/secret authentication methods.
+
+**Note:** The `config.env` file is included in `.gitignore` and should never be committed to the repository.
 
 ## Notes
 
-- The code uses Binance's testnet by default, which is a sandbox environment
-- To use real Binance API, set `testnet=False` when creating the client
-- For production use, never hardcode API keys/secrets in your code
-- Generated images and audio files are automatically excluded from git
+- The code uses Binance's public API endpoints by default
+- The SSH key-signing method is implemented in the `binance_api.py` module
+- Generated image files are automatically excluded from git

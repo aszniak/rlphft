@@ -128,6 +128,9 @@ def get_top_coins_by_volume(quote_asset="USDT", limit=5, cache_hours=24):
     """
     Fetch top cryptocurrency pairs by volume
 
+    NOTE: While not currently used directly (we use hardcoded list),
+    this function is kept for potential future dynamic symbol selection.
+
     Args:
         quote_asset: Base currency (e.g., 'USDT')
         limit: Number of top pairs to return

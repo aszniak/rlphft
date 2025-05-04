@@ -3,8 +3,6 @@ import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 from data_fetcher import (
-    fetch_and_cache_klines,
-    process_klines_data,
     fetch_training_data,
     prepare_multi_asset_dataset,
 )
