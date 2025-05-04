@@ -1,6 +1,60 @@
-# Crypto Trading Research
+# Reinforcement Learning for Cryptocurrency Trading
 
-A research project for algorithmic cryptocurrency trading and signal analysis using the Binance API.
+This project applies reinforcement learning techniques to cryptocurrency trading using Binance market data.
+
+## Python Setup
+
+The project uses Python 3.10 for all scripts, as it has the necessary packages installed.
+
+### Running Scripts
+
+Instead of using `python script.py`, use the provided shell script:
+
+```bash
+./run.sh script.py [arguments]
+```
+
+This ensures all scripts run with the correct Python version and environment.
+
+### Visualization
+
+To visualize the technical indicators:
+
+```bash
+# Visualize a random cryptocurrency
+./run_visualization.sh
+
+# Visualize a specific cryptocurrency
+./run_visualization.sh BTCUSDT
+
+# Visualize a specific cryptocurrency with a custom timeframe (days)
+./run_visualization.sh ETHUSDT 3
+```
+
+This will generate a PNG file showing the selected cryptocurrency with all technical indicators, including:
+
+- Price chart with SMA, EMA, and Bollinger Bands
+- Volume with SMA
+- RSI and Stochastic oscillators
+- MACD
+- ATR (Average True Range) and Z-Score
+
+### Updating Packages
+
+If you need to install or update packages, use:
+
+```bash
+./update_packages.sh
+```
+
+## Project Structure
+
+- `main.py` - Main script to fetch and process data
+- `data_fetcher.py` - Functions to fetch crypto data from Binance API
+- `technical_indicators.py` - Implementations of technical indicators
+- `visualize_indicators.py` - Visualization of technical indicators
+- `run.sh` - Helper script to run Python scripts with the correct version
+- `update_packages.sh` - Helper script to install/update required packages
 
 ## Features
 
@@ -11,20 +65,6 @@ A research project for algorithmic cryptocurrency trading and signal analysis us
 - Statistical analysis of price randomness
 - Compare real data against synthetic benchmarks
 - Framework for adding trading strategies
-
-## Setup
-
-1. Install dependencies:
-
-   ```
-   pip install -r requirements.txt
-   ```
-
-2. Run the main script to fetch data and perform analysis:
-
-   ```
-   python main.py
-   ```
 
 ## Analysis Features
 
