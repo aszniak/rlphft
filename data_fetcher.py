@@ -111,21 +111,4 @@ def process_klines_data(klines_data):
     return df
 
 
-def calculate_relative_changes(df):
-    """Calculate relative price changes from previous point"""
-    rel_df = df.copy()
 
-    # Calculate percentage changes with previous point
-    rel_df["pct_change"] = rel_df["close"].pct_change()
-
-    # First point should be 1 (as specified)
-    rel_df["rel_change"] = 1.0
-
-    # Calculate relative changes for each subsequent point
-    for i in range(1, len(rel_df)):
-        rel_df.loc[rel_df.index[i], "rel_change"] = 1 + rel_df["pct_change"].iloc[i]
-
-    # Shift everything to start at 0 instead of 1
-    rel_df["rel_change_shifted"] = rel_df["rel_change"] - 1
-
-    return rel_df
