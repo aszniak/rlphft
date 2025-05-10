@@ -2,6 +2,77 @@
 
 This project applies reinforcement learning techniques to cryptocurrency trading using Binance market data.
 
+## Prerequisites
+
+### Cryptocurrency Trading Components
+
+- Python 3.10 or higher
+- Requests, NumPy, Pandas, Matplotlib
+- SSH key for Binance API authentication (optional)
+
+### CartPole RL Components
+
+- PyTorch 2.0+
+- Gymnasium 0.29+
+- OpenCV Python
+- tqdm for progress tracking
+
+You can install all dependencies with:
+
+```bash
+# Install for system Python
+./update_packages.sh
+
+# Or use a virtual environment for the RL components
+./update_packages.sh --venv
+```
+
+## CartPole Implementation
+
+Before applying RL to the more complex domain of cryptocurrency trading, we've implemented a Proximal Policy Optimization (PPO) agent to solve the classic CartPole control problem. This serves as a testbed for our RL algorithms and visualization techniques.
+
+### Running the CartPole Environment
+
+For convenience, use the provided shell script:
+
+```bash
+# Run with default settings (will load saved model if available)
+./run_cartpole.sh
+
+# Force training a new model even if one exists
+./run_cartpole.sh --train
+
+# Specify a custom path for saving/loading the model
+./run_cartpole.sh --model_path my_model
+
+# Set the number of training epochs
+./run_cartpole.sh --train --epochs 100
+
+# Set the number of evaluation episodes
+./run_cartpole.sh --eval_episodes 30
+```
+
+Alternatively, you can run the Python script directly:
+
+```bash
+python cartpole.py [arguments]
+```
+
+### Features of the CartPole Implementation
+
+- **PPO Implementation**: Efficient implementation of the PPO algorithm
+- **Model Saving/Loading**: Save trained models and load them later to avoid retraining
+- **Visualization**: Three-panel visualization showing:
+  - Random agent performance
+  - Training progress of the PPO agent
+  - Trained agent performance
+- **Progress Tracking**: Uses tqdm for clear progress visualization during training
+
+### Files for CartPole
+
+- `cartpole.py` - Main file for running the CartPole environment with visualization
+- `agent.py` - Implementation of the PPO agent and policy/value networks
+
 ## Python Setup
 
 The project uses Python 3.10 for all scripts, as it has the necessary packages installed.
@@ -49,12 +120,31 @@ If you need to install or update packages, use:
 
 ## Project Structure
 
-- `main.py` - Main script to fetch and process data
-- `data_fetcher.py` - Functions to fetch crypto data from Binance API
-- `technical_indicators.py` - Implementations of technical indicators
-- `visualize_indicators.py` - Visualization of technical indicators
-- `run.sh` - Helper script to run Python scripts with the correct version
-- `update_packages.sh` - Helper script to install/update required packages
+- **Main Scripts:**
+
+  - `main.py` - Main script to fetch and process cryptocurrency data
+  - `cartpole.py` - Main file for running the CartPole environment with visualization
+
+- **Agents and Models:**
+
+  - `agent.py` - Implementation of the PPO agent and policy/value networks for CartPole
+
+- **Data Processing:**
+
+  - `data_fetcher.py` - Functions to fetch crypto data from Binance API
+  - `technical_indicators.py` - Implementations of technical indicators
+  - `visualize_indicators.py` - Visualization of technical indicators
+
+- **Helper Scripts:**
+
+  - `run.sh` - Helper script to run Python scripts with the correct version
+  - `run_cartpole.sh` - Helper script for running the CartPole environment
+  - `run_visualization.sh` - Script for visualizing technical indicators
+  - `update_packages.sh` - Helper script to install/update required packages
+
+- **Configuration:**
+  - `requirements.txt` - List of required Python packages
+  - `config.env` - Configuration file for API keys (gitignored)
 
 ## Features
 
