@@ -6,15 +6,15 @@ import cv2
 from tqdm import tqdm
 
 # Hyperparameters
-HIDDEN_DIM = 64       # Number of neurons in hidden layers
-DROPOUT_RATE = 0.2    # Probability of dropping a neuron during training (regularization)
-GAMMA = 0.99          # Discount factor for future rewards (closer to 1 = more long-term focus)
-CLIP_EPSILON = 0.2    # PPO clipping parameter to limit policy update size
-LEARNING_RATE = 3e-4  # Step size for optimizer updates
-BATCH_SIZE = 128      # Number of samples processed in each training mini-batch
-PPO_EPOCHS = 10       # Number of times to reuse each collected trajectory for updates
-ENTROPY_COEF = 0.01   # Coefficient for entropy bonus (higher = more exploration)
-VALUE_COEF = 0.5      # Coefficient for value loss in the total loss function
+HIDDEN_DIM = 64  # Number of neurons in hidden layers
+DROPOUT_RATE = 0.2  # Probability of dropping a neuron during training (regularization)
+GAMMA = 0.99  # Discount factor for future rewards (closer to 1 = more long-term focus)
+CLIP_EPSILON = 0.25  # PPO clipping parameter to limit policy update size
+LEARNING_RATE = 1e-3  # Step size for optimizer updates
+BATCH_SIZE = 128  # Number of samples processed in each training mini-batch
+PPO_EPOCHS = 10  # Number of times to reuse each collected trajectory for updates
+ENTROPY_COEF = 0.015  # Coefficient for entropy bonus (higher = more exploration)
+VALUE_COEF = 0.5  # Coefficient for value loss in the total loss function
 
 
 class RandomAgent:
@@ -102,6 +102,12 @@ class PPOAgent:
         self.state_dim = state_dim
         self.action_dim = action_dim
 
+        # Add these for tracking across all epochs
+        self.total_training_steps = 0
+        self.total_training_reward = 0
+        self.all_epoch_rewards = []
+        self.all_episode_rewards = []
+
     def select_action(self, state):
         state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         probs = self.policy(state)
@@ -143,6 +149,20 @@ class PPOAgent:
         batch_size=BATCH_SIZE,
         epochs=PPO_EPOCHS,
     ):
+        # Update total training metrics
+        if not isinstance(rewards, torch.Tensor):
+            rewards_tensor = torch.FloatTensor(rewards)
+        else:
+            rewards_tensor = rewards.cpu()  # Make sure it's on CPU for numpy conversion
+
+        # Update cumulative training statistics
+        batch_reward = rewards_tensor.sum().item()
+        self.total_training_steps += len(rewards)
+        self.total_training_reward += batch_reward
+
+        # Store epoch reward
+        self.all_epoch_rewards.append(batch_reward)
+
         # Convert to tensors and move to device only once
         states = torch.FloatTensor(np.array(states)).to(self.device)
         actions = torch.LongTensor(np.array(actions)).to(self.device)
@@ -214,11 +234,13 @@ class PPOAgent:
         self, env, num_steps=2048, display=False, window_size=(1024, 768)
     ):
         states, actions, rewards, dones, log_probs, next_states = [], [], [], [], [], []
+        episode_rewards = []  # Track rewards per episode
         episode_lengths = []
 
         state, _ = env.reset()
         done = False
         ep_length = 0
+        current_episode_reward = 0  # Track current episode's reward
 
         # Use tqdm for steps collection - but disable if already in an outer tqdm
         pbar = tqdm(range(num_steps), desc="Collecting steps", leave=False)
@@ -226,6 +248,9 @@ class PPOAgent:
             action, log_prob = self.select_action(state)
             next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
+
+            # Track episode reward
+            current_episode_reward += reward
 
             # Render if display is enabled
             if display:
@@ -247,17 +272,24 @@ class PPOAgent:
             state = next_state
             ep_length += 1
 
-            # If episode ended, reset environment and store episode length
+            # If episode ended, reset environment and store episode stats
             if done:
+                episode_rewards.append(current_episode_reward)
                 episode_lengths.append(ep_length)
+                current_episode_reward = 0
                 ep_length = 0
                 state, _ = env.reset()
                 done = False
                 pbar.set_postfix({"episodes_completed": len(episode_lengths)})
 
-        # Add the final episode length if it didn't end
+        # Store the last episode if not complete
         if ep_length > 0:
             episode_lengths.append(ep_length)
+            episode_rewards.append(current_episode_reward)
+
+        # Store for reporting
+        self.last_episode_rewards = episode_rewards
+        self.last_episode_lengths = episode_lengths
 
         return states, actions, rewards, dones, next_states, log_probs, episode_lengths
 
@@ -301,5 +333,24 @@ class PPOAgent:
             tqdm.write(f"Error loading model: {str(e)}")
             tqdm.write("Creating a new model instead.")
             return None
+
+    def print_training_summary(self, eval_rewards=None):
+        """Print a simple summary of the training performance"""
+        print("\nTraining Summary:")
+
+        # Only show evaluation rewards if provided
+        if eval_rewards is not None and len(eval_rewards) > 0:
+            print(f"Number of Training Epochs: {len(eval_rewards)}")
+            print(f"Final Average Reward: {eval_rewards[-1]:.2f}")
+            print(f"Peak Average Reward: {max(eval_rewards):.2f}")
+
+            # Calculate improvement
+            if len(eval_rewards) > 1:
+                first_reward = eval_rewards[0]
+                last_reward = eval_rewards[-1]
+                improvement = ((last_reward - first_reward) / first_reward) * 100
+                print(f"Improvement: {improvement:.2f}%")
+        else:
+            print("No evaluation metrics available.")
 
     # Add other methods as needed

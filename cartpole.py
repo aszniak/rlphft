@@ -70,7 +70,7 @@ def evaluate_agent(
                 frame = env.render()
                 frame = cv2.resize(frame, window_size)
                 cv2.imshow("CartPole", frame)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
+                if cv2.waitKey(6) & 0xFF == ord("q"):
                     break
 
             ep_reward += reward
@@ -107,7 +107,7 @@ def evaluate_agent(
         cv2.destroyAllWindows()
 
     avg_reward = np.mean(total_rewards)
-    tqdm.write(f"Average reward over {episodes} episodes: {avg_reward}")
+    tqdm.write(f"Average reward over {episodes} episodes: {avg_reward:.2f}")
 
     return total_rewards
 
@@ -186,6 +186,9 @@ def train_ppo(
         # Force redraw
         fig.canvas.draw()
         plt.pause(0.1)
+
+    # After training is complete
+    agent.print_training_summary(rewards_history)
 
     return rewards_history, eval_epochs  # Return both for final plot
 
