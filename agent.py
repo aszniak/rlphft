@@ -71,6 +71,8 @@ class PPOAgent:
         self.value_optimizer = optim.Adam(self.value.parameters(), lr=lr)
         self.gamma = gamma
         self.clip_epsilon = clip_epsilon
+        self.state_dim = state_dim
+        self.action_dim = action_dim
 
     def select_action(self, state):
         state = torch.FloatTensor(state).unsqueeze(0)
@@ -220,5 +222,46 @@ class PPOAgent:
             episode_lengths.append(ep_length)
 
         return states, actions, rewards, dones, next_states, log_probs, episode_lengths
+
+    def save_model(self, path="saved_model"):
+        """Save policy and value networks to files"""
+        # Save model data
+        policy_state = self.policy.state_dict()
+        value_state = self.value.state_dict()
+
+        # Create a dictionary with only the necessary data
+        save_dict = {
+            "policy_state_dict": policy_state,
+            "value_state_dict": value_state,
+            "state_dim": self.state_dim,
+            "action_dim": self.action_dim,
+        }
+
+        # Save with appropriate options
+        torch.save(save_dict, f"{path}.pt")
+        tqdm.write(f"Model saved to {path}.pt")
+
+    @classmethod
+    def load_model(cls, path="saved_model"):
+        """Load policy and value networks from files"""
+        try:
+            # Set weights_only=False to handle newer PyTorch 2.6+ behavior
+            checkpoint = torch.load(f"{path}.pt", weights_only=False)
+            state_dim = checkpoint["state_dim"]
+            action_dim = checkpoint["action_dim"]
+
+            agent = cls(state_dim, action_dim)
+            agent.policy.load_state_dict(checkpoint["policy_state_dict"])
+            agent.value.load_state_dict(checkpoint["value_state_dict"])
+
+            tqdm.write(f"Model loaded from {path}.pt")
+            return agent
+        except FileNotFoundError:
+            tqdm.write(f"No saved model found at {path}.pt")
+            return None
+        except Exception as e:
+            tqdm.write(f"Error loading model: {str(e)}")
+            tqdm.write("Creating a new model instead.")
+            return None
 
     # Add other methods as needed
