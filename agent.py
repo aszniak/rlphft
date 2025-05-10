@@ -5,6 +5,17 @@ import numpy as np
 import cv2
 from tqdm import tqdm
 
+# Hyperparameters
+HIDDEN_DIM = 64       # Number of neurons in hidden layers
+DROPOUT_RATE = 0.2    # Probability of dropping a neuron during training (regularization)
+GAMMA = 0.99          # Discount factor for future rewards (closer to 1 = more long-term focus)
+CLIP_EPSILON = 0.2    # PPO clipping parameter to limit policy update size
+LEARNING_RATE = 3e-4  # Step size for optimizer updates
+BATCH_SIZE = 128      # Number of samples processed in each training mini-batch
+PPO_EPOCHS = 10       # Number of times to reuse each collected trajectory for updates
+ENTROPY_COEF = 0.01   # Coefficient for entropy bonus (higher = more exploration)
+VALUE_COEF = 0.5      # Coefficient for value loss in the total loss function
+
 
 class RandomAgent:
     """
@@ -25,13 +36,15 @@ class PolicyNetwork(nn.Module):
     A policy network that outputs a probability distribution over actions.
     """
 
-    def __init__(self, state_dim, action_dim, hidden_dim=64):
+    def __init__(self, state_dim, action_dim, hidden_dim=HIDDEN_DIM):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(DROPOUT_RATE),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(DROPOUT_RATE),
             nn.Linear(hidden_dim, action_dim),
             nn.Softmax(dim=-1),
         )
@@ -45,13 +58,15 @@ class ValueNetwork(nn.Module):
     A value network that outputs a single value for a given state.
     """
 
-    def __init__(self, state_dim, hidden_dim=64):
+    def __init__(self, state_dim, hidden_dim=HIDDEN_DIM):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(DROPOUT_RATE),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(DROPOUT_RATE),
             nn.Linear(hidden_dim, 1),
         )
 
@@ -64,9 +79,22 @@ class PPOAgent:
     A PPO agent that uses a policy network and a value network to select actions and compute returns.
     """
 
-    def __init__(self, state_dim, action_dim, gamma=0.99, clip_epsilon=0.2, lr=3e-4):
-        self.policy = PolicyNetwork(state_dim, action_dim)
-        self.value = ValueNetwork(state_dim)
+    def __init__(
+        self,
+        state_dim,
+        action_dim,
+        gamma=GAMMA,
+        clip_epsilon=CLIP_EPSILON,
+        lr=LEARNING_RATE,
+        device=None,
+    ):
+        self.device = (
+            device
+            if device
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
+        self.policy = PolicyNetwork(state_dim, action_dim).to(self.device)
+        self.value = ValueNetwork(state_dim).to(self.device)
         self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=lr)
         self.value_optimizer = optim.Adam(self.value.parameters(), lr=lr)
         self.gamma = gamma
@@ -75,20 +103,33 @@ class PPOAgent:
         self.action_dim = action_dim
 
     def select_action(self, state):
-        state = torch.FloatTensor(state).unsqueeze(0)
+        state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         probs = self.policy(state)
         dist = torch.distributions.Categorical(probs)
         action = dist.sample()
         return action.item(), dist.log_prob(action)
 
     def compute_returns(self, rewards, dones, next_value):
-        returns = []
+        # Convert inputs to tensors if they aren't already
+        if not isinstance(rewards, torch.Tensor):
+            rewards = torch.FloatTensor(rewards).to(self.device)
+        if not isinstance(dones, torch.Tensor):
+            dones = torch.BoolTensor(dones).to(self.device)
+        if not isinstance(next_value, torch.Tensor):
+            next_value = torch.tensor(next_value, dtype=torch.float32).to(self.device)
+
+        # Pre-allocate returns tensor
+        returns = torch.zeros_like(rewards).to(self.device)
+
+        # Initialize with next_value
         R = next_value
-        for reward, done in zip(reversed(rewards), reversed(dones)):
-            if done:
-                R = 0
-            R = reward + self.gamma * R
-            returns.insert(0, R)
+
+        # Calculate returns in reverse order
+        for i in range(len(rewards) - 1, -1, -1):
+            # Reset return if episode ended
+            R = rewards[i] + self.gamma * R * (1 - dones[i].float())
+            returns[i] = R
+
         return returns
 
     def update(
@@ -99,30 +140,27 @@ class PPOAgent:
         dones,
         next_states,
         old_log_probs,
-        batch_size=64,
-        epochs=10,
+        batch_size=BATCH_SIZE,
+        epochs=PPO_EPOCHS,
     ):
-        # Convert to tensors - first convert lists to numpy arrays for efficiency
-        states = torch.FloatTensor(np.array(states))
-        actions = torch.LongTensor(np.array(actions))
-        old_log_probs = torch.FloatTensor(np.array(old_log_probs))
+        # Convert to tensors and move to device only once
+        states = torch.FloatTensor(np.array(states)).to(self.device)
+        actions = torch.LongTensor(np.array(actions)).to(self.device)
+        old_log_probs = torch.FloatTensor(np.array(old_log_probs)).to(self.device)
 
-        # Compute returns and advantages
+        # Compute returns and advantages with tensors
         with torch.no_grad():
-            next_values = self.value(torch.FloatTensor(np.array(next_states))).squeeze(
-                -1
-            )
+            next_values = self.value(
+                torch.FloatTensor(np.array(next_states)).to(self.device)
+            ).squeeze(-1)
 
+        # Our compute_returns now returns a tensor, so no need to convert back and forth
         returns = self.compute_returns(
             rewards, dones, next_values[-1] if len(next_values) > 0 else 0
         )
-        returns = torch.FloatTensor(np.array(returns))
-
-        # Compute values for current states
-        values = self.value(states).squeeze(-1)
 
         # Calculate advantages
-        advantages = returns - values.detach()
+        advantages = returns - self.value(states).squeeze(-1).detach()
 
         # Normalize advantages (reduces variance)
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
@@ -160,10 +198,10 @@ class PPOAgent:
                 value_loss = ((current_values - returns[idx]) ** 2).mean()
 
                 # Entropy bonus (encourages exploration)
-                entropy_loss = -0.01 * entropy
+                entropy_loss = -ENTROPY_COEF * entropy
 
                 # Total loss
-                total_loss = policy_loss + 0.5 * value_loss + entropy_loss
+                total_loss = policy_loss + VALUE_COEF * value_loss + entropy_loss
 
                 # Update networks
                 self.policy_optimizer.zero_grad()
