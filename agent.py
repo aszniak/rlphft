@@ -6,14 +6,14 @@ import cv2
 from tqdm import tqdm
 
 # Hyperparameters
-HIDDEN_DIM = 64  # Number of neurons in hidden layers
-DROPOUT_RATE = 0.2  # Probability of dropping a neuron during training (regularization)
+HIDDEN_DIM = 256  # Number of neurons in hidden layers
+DROPOUT_RATE = 0.1  # Probability of dropping a neuron during training (regularization)
 GAMMA = 0.99  # Discount factor for future rewards (closer to 1 = more long-term focus)
-CLIP_EPSILON = 0.25  # PPO clipping parameter to limit policy update size
+CLIP_EPSILON = 0.1  # PPO clipping parameter to limit policy update size
 LEARNING_RATE = 1e-3  # Step size for optimizer updates
 BATCH_SIZE = 128  # Number of samples processed in each training mini-batch
 PPO_EPOCHS = 10  # Number of times to reuse each collected trajectory for updates
-ENTROPY_COEF = 0.015  # Coefficient for entropy bonus (higher = more exploration)
+ENTROPY_COEF = 0.01  # Coefficient for entropy bonus (higher = more exploration)
 VALUE_COEF = 0.5  # Coefficient for value loss in the total loss function
 
 
@@ -109,10 +109,13 @@ class PPOAgent:
         self.all_episode_rewards = []
 
     def select_action(self, state):
-        state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-        probs = self.policy(state)
-        dist = torch.distributions.Categorical(probs)
-        action = dist.sample()
+        # Set to evaluation mode for inference
+        self.policy.eval()
+        with torch.no_grad():
+            state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            probs = self.policy(state)
+            dist = torch.distributions.Categorical(probs)
+            action = dist.sample()
         return action.item(), dist.log_prob(action)
 
     def compute_returns(self, rewards, dones, next_value):
@@ -149,6 +152,10 @@ class PPOAgent:
         batch_size=BATCH_SIZE,
         epochs=PPO_EPOCHS,
     ):
+        # Set to training mode for updates
+        self.policy.train()
+        self.value.train()
+
         # Update total training metrics
         if not isinstance(rewards, torch.Tensor):
             rewards_tensor = torch.FloatTensor(rewards)
