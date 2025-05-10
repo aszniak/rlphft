@@ -195,4 +195,6 @@ cython_debug/
 *.pickle
 *.pickle.gz
 *.pickle.bz2
-*.pickle.zip
+*.pickle.zip# Environment configuration
+config.env
+*.env
