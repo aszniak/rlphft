@@ -4,6 +4,7 @@ from agent import PPOAgent, RandomAgent
 import matplotlib.pyplot as plt
 import cv2
 from tqdm import tqdm
+import argparse
 
 # Create a single figure with three subplots for our three visualizations
 plt.ion()
@@ -190,6 +191,27 @@ def train_ppo(
 
 
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="CartPole-v1 with PPO")
+    parser.add_argument(
+        "--train",
+        action="store_true",
+        help="Train a new model even if a saved one exists",
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default="saved_model",
+        help="Path to save/load the model",
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=50, help="Number of training epochs"
+    )
+    parser.add_argument(
+        "--eval_episodes", type=int, default=20, help="Number of evaluation episodes"
+    )
+    args = parser.parse_args()
+
     # Setup plots first
     setup_plots()
 
@@ -199,26 +221,57 @@ def main():
     action_dim = env.action_space.n
 
     random_agent = RandomAgent(action_dim)
-    ppo_agent = PPOAgent(state_dim, action_dim)
+
+    # Try to load a pre-trained agent, or create a new one if not found or forced to train
+    loaded_agent = None
+    if not args.train:
+        try:
+            loaded_agent = PPOAgent.load_model(args.model_path)
+        except Exception as e:
+            tqdm.write(f"Failed to load model: {str(e)}")
+            loaded_agent = None
+
+    if loaded_agent is not None:
+        ppo_agent = loaded_agent
+        tqdm.write("Using pre-trained agent. Skipping training phase.")
+        training_needed = False
+    else:
+        if args.train:
+            tqdm.write("Training new model as requested by --train flag.")
+        else:
+            tqdm.write("No valid saved model found. Training a new model.")
+        ppo_agent = PPOAgent(state_dim, action_dim)
+        training_needed = True
 
     # 1. Evaluate random agent
     tqdm.write("Random Agent Performance:")
-    random_rewards = evaluate_agent(random_agent, env, episodes=20, plot_idx=0)
-
-    # 2. Train PPO agent
-    tqdm.write("\nTraining PPO Agent...")
-    rewards_history, eval_epochs = train_ppo(
-        env,
-        ppo_agent,
-        num_epochs=50,
-        steps_per_epoch=2048,
-        display_env=False,
-        window_size=(800, 600),
+    random_rewards = evaluate_agent(
+        random_agent, env, episodes=args.eval_episodes, plot_idx=0
     )
+
+    # 2. Train PPO agent if needed
+    if training_needed:
+        tqdm.write("\nTraining PPO Agent...")
+        rewards_history, eval_epochs = train_ppo(
+            env,
+            ppo_agent,
+            num_epochs=args.epochs,
+            steps_per_epoch=2048,
+            display_env=False,
+            window_size=(800, 600),
+        )
+
+        # Save the trained model
+        try:
+            ppo_agent.save_model(args.model_path)
+        except Exception as e:
+            tqdm.write(f"Error saving model: {str(e)}")
 
     # 3. Evaluate trained PPO agent
     tqdm.write("\nTrained PPO Agent Performance:")
-    ppo_rewards = evaluate_agent(ppo_agent, env, episodes=20, display=True, plot_idx=2)
+    ppo_rewards = evaluate_agent(
+        ppo_agent, env, episodes=args.eval_episodes, display=True, plot_idx=2
+    )
 
     # Keep the plots open until user closes window
     plt.ioff()
