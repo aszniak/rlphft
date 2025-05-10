@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import cv2
+from tqdm import tqdm
 
 
 class RandomAgent:
@@ -179,7 +180,9 @@ class PPOAgent:
         done = False
         ep_length = 0
 
-        for step in range(num_steps):
+        # Use tqdm for steps collection - but disable if already in an outer tqdm
+        pbar = tqdm(range(num_steps), desc="Collecting steps", leave=False)
+        for step in pbar:
             action, log_prob = self.select_action(state)
             next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
@@ -210,6 +213,7 @@ class PPOAgent:
                 ep_length = 0
                 state, _ = env.reset()
                 done = False
+                pbar.set_postfix({"episodes_completed": len(episode_lengths)})
 
         # Add the final episode length if it didn't end
         if ep_length > 0:
