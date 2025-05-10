@@ -36,6 +36,9 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Saved models
+*.pt
+
 # Unit test / coverage reports
 htmlcov/
 .tox/
