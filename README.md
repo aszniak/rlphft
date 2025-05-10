@@ -1,4 +1,4 @@
-# Reinforcement Learning for Cryptocurrency Trading
+# Reinforcement Learning Powered High Frequency Trading
 
 This project applies reinforcement learning techniques to cryptocurrency trading using Binance market data.
 
