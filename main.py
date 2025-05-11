@@ -6,6 +6,8 @@ import torch
 from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import wandb
+import time
 
 from data_fetcher import (
     fetch_training_data,
@@ -18,6 +20,25 @@ from trading_env import TradingEnv, BuyAndHoldEnv, TradingAction
 load_dotenv("config.env")
 API_KEY = os.getenv("API_KEY")
 
+# ===== CONSTANTS =====
+# W&B settings
+WANDB_PROJECT = "crypto-trading-rl"
+WANDB_TEAM = "aszczesniak-aszczesniak"
+
+# Data settings
+DEFAULT_INTERVAL = "1m"  # 1-minute candles
+
+# Environment settings
+GAME_LENGTH = 1440  # 24 hours of minute candles
+WINDOW_SIZE = 30  # How many past candles to include in state
+COMMISSION_RATE = 0.001  # 0.1% commission rate (Binance standard)
+
+# Training parameters
+EVAL_EPISODES = 5
+STEPS_PER_EPOCH = 2000
+DEFAULT_EPOCHS = 100
+INITIAL_BALANCE = 10000.0
+
 # Hardcoded list of top cryptocurrencies by volume
 # These are the major coins with high liquidity
 TOP_CRYPTOCURRENCIES = [
@@ -28,14 +49,10 @@ TOP_CRYPTOCURRENCIES = [
     "XRPUSDT",  # Ripple
 ]
 
-# Training and evaluation parameters
-EVAL_EPISODES = 5
-STEPS_PER_EPOCH = 2000
-DEFAULT_EPOCHS = 100
-INITIAL_BALANCE = 10000.0
 
-
-def fetch_data(symbols=None, interval="1m", lookback_days=30, force_refresh=False):
+def fetch_data(
+    symbols=None, interval=DEFAULT_INTERVAL, lookback_days=30, force_refresh=False
+):
     """
     Fetch and prepare data for training or evaluation.
 
@@ -101,9 +118,10 @@ def train_agent(
     initial_balance=INITIAL_BALANCE,
     model_save_path=None,
     display_plots=True,
+    use_wandb=False,
 ):
     """
-    Train a PPO agent for trading.
+    Train a PPO agent for trading with optional W&B tracking.
 
     Args:
         data_dict: Dictionary with processed price data
@@ -113,16 +131,33 @@ def train_agent(
         initial_balance: Initial trading balance
         model_save_path: Path to save the trained model
         display_plots: Whether to display performance plots
+        use_wandb: Whether to use Weights & Biases for tracking
 
     Returns:
         Trained agent
     """
-    game_length = 1440  # 24 hours of minute candles
+    # Initialize W&B if requested
+    if use_wandb:
+        wandb.init(
+            project=WANDB_PROJECT,
+            entity=WANDB_TEAM,
+            name=f"ppo-{symbol}-{time.strftime('%Y%m%d-%H%M%S')}",
+            config={
+                "symbol": symbol,
+                "epochs": num_epochs,
+                "steps_per_epoch": steps_per_epoch,
+                "initial_balance": initial_balance,
+                "game_length": GAME_LENGTH,
+                "model_type": "PPO",
+                "window_size": WINDOW_SIZE,
+                "commission_rate": COMMISSION_RATE,
+            },
+        )
 
     # Check if we have enough data
-    if len(data_dict[symbol]) < game_length * 2:
+    if len(data_dict[symbol]) < GAME_LENGTH * 2:
         raise ValueError(
-            f"Not enough data for {symbol}. Need at least {game_length * 2} candles."
+            f"Not enough data for {symbol}. Need at least {GAME_LENGTH * 2} candles."
         )
 
     # Setup environment
@@ -130,7 +165,9 @@ def train_agent(
         data_dict=data_dict,
         symbol=symbol,
         initial_balance=initial_balance,
-        game_length=game_length,
+        game_length=GAME_LENGTH,
+        window_size=WINDOW_SIZE,
+        commission_rate=COMMISSION_RATE,
     )
 
     # Create agents
@@ -166,6 +203,35 @@ def train_agent(
         )
         epoch_rewards.append(avg_reward)
 
+        # Get final portfolio value for this epoch
+        portfolio_value = (
+            ppo_agent.last_info["total_portfolio_value"]
+            if hasattr(ppo_agent, "last_info")
+            else None
+        )
+
+        # Log to W&B
+        if use_wandb:
+            metrics = {
+                "epoch": epoch,
+                "avg_reward": avg_reward,
+                "episode_count": len(ppo_agent.last_episode_rewards),
+            }
+
+            # Add portfolio value if available
+            if portfolio_value:
+                metrics["portfolio_value"] = portfolio_value
+
+            # Add action distribution
+            if len(actions) > 0:
+                action_counts = np.bincount(actions, minlength=env.action_space.n)
+                action_freq = action_counts / len(actions)
+                for i, freq in enumerate(action_freq):
+                    action_name = TradingAction(i).name.lower()
+                    metrics[f"action_freq_{action_name}"] = freq
+
+            wandb.log(metrics)
+
         # Display progress
         if display_plots and (epoch + 1) % 10 == 0:
             ax.clear()
@@ -182,6 +248,14 @@ def train_agent(
         ppo_agent.save_model(model_save_path)
         print(f"Model saved to {model_save_path}")
 
+        # Upload model to W&B
+        if use_wandb:
+            wandb.save(f"{model_save_path}.pt")
+
+    # Finish W&B run
+    if use_wandb:
+        wandb.finish()
+
     if display_plots:
         plt.ioff()
 
@@ -196,6 +270,7 @@ def evaluate_agents(
     episodes=EVAL_EPISODES,
     initial_balance=INITIAL_BALANCE,
     display_plots=True,
+    use_wandb=False,
 ):
     """
     Evaluate and compare agents: trained agent vs random agent vs buy and hold.
@@ -208,18 +283,19 @@ def evaluate_agents(
         episodes: Number of evaluation episodes
         initial_balance: Initial trading balance
         display_plots: Whether to display performance plots
+        use_wandb: Whether to use Weights & Biases for tracking
 
     Returns:
         Dictionary with performance results
     """
-    game_length = 1440  # 24 hours of minute candles
-
     # Setup environments with fixed start for fair comparison
     env = TradingEnv(
         data_dict=data_dict,
         symbol=symbol,
         initial_balance=initial_balance,
-        game_length=game_length,
+        game_length=GAME_LENGTH,
+        window_size=WINDOW_SIZE,
+        commission_rate=COMMISSION_RATE,
         random_start=False,
     )
 
@@ -227,7 +303,9 @@ def evaluate_agents(
         data_dict=data_dict,
         symbol=symbol,
         initial_balance=initial_balance,
-        game_length=game_length,
+        game_length=GAME_LENGTH,
+        window_size=WINDOW_SIZE,
+        commission_rate=COMMISSION_RATE,
         random_start=False,
     )
 
@@ -313,6 +391,38 @@ def evaluate_agents(
     if display_plots:
         plt.ioff()
         plt.show()
+
+    # Log comparison to W&B
+    if use_wandb and not wandb.run:
+        wandb.init(
+            project=WANDB_PROJECT,
+            entity=WANDB_TEAM,
+            name=f"eval-{symbol}-{time.strftime('%Y%m%d-%H%M%S')}",
+            config={"symbol": symbol, "episodes": episodes},
+        )
+
+    # Log final evaluation metrics
+    if use_wandb:
+        # Log returns
+        wandb.log(
+            {
+                "random_agent_return": random_return,
+                "buy_hold_return": buyhold_return,
+                "trained_agent_return": ppo_return,
+            }
+        )
+
+        # Create a comparison plot and log it
+        fig, ax = plt.figure(figsize=(10, 6)), plt.axes()
+        ax.plot(range(len(random_perf)), random_perf, "r-", label="Random")
+        ax.plot(range(len(buyhold_perf)), buyhold_perf, "y-", label="Buy & Hold")
+        ax.plot(range(len(ppo_perf)), ppo_perf, "g-", label="Trained Agent")
+        ax.set_xlabel("Step")
+        ax.set_ylabel("Portfolio Value ($)")
+        ax.legend()
+        wandb.log({"performance_comparison": wandb.Image(fig)})
+
+        wandb.finish()
 
     return {
         "random": {"values": random_perf, "return": random_return},
@@ -400,7 +510,7 @@ def evaluate_agent(agent, env, episodes=1, plot_ax=None):
 
 
 def test_with_binance(
-    agent, symbol, test_duration=1440, initial_balance=INITIAL_BALANCE
+    agent, symbol, test_duration=GAME_LENGTH, initial_balance=INITIAL_BALANCE
 ):
     """
     Test the agent with Binance testnet.
@@ -485,6 +595,11 @@ def main():
         help="Custom model path (default: saved_model_{symbol})",
     )
 
+    # Add W&B arg
+    parser.add_argument(
+        "--wandb", action="store_true", help="Track metrics using Weights & Biases"
+    )
+
     args = parser.parse_args()
 
     # Determine model path
@@ -519,6 +634,7 @@ def main():
             initial_balance=args.initial_balance,
             model_save_path=model_path,
             display_plots=not args.no_plots,
+            use_wandb=args.wandb,
         )
 
     # Evaluate
@@ -534,6 +650,7 @@ def main():
             episodes=args.episodes,
             initial_balance=args.initial_balance,
             display_plots=not args.no_plots,
+            use_wandb=args.wandb,
         )
 
     # Test with Binance testnet
@@ -551,7 +668,7 @@ def main():
         testnet_results = test_with_binance(
             trained_agent,
             args.symbol,
-            test_duration=1440,
+            test_duration=GAME_LENGTH,
             initial_balance=args.initial_balance,
         )
 
