@@ -47,6 +47,17 @@ class Config:
     eval_episodes: int = 5
     steps_per_epoch: int = 1440  # Exactly one 24-hour period per epoch
     epochs: int = 100
+    num_parallel_envs: int = 8  # Number of parallel environments for data collection
+    batch_size: int = 128  # Batch size for PPO updates
+
+    # PPO Agent parameters
+    hidden_dim: int = 256  # Number of neurons in hidden layers
+    gamma: float = 0.99  # Discount factor for future rewards
+    clip_epsilon: float = 0.2  # PPO clipping parameter
+    learning_rate: float = 1e-3  # Learning rate for optimizer
+    ppo_epochs: int = 10  # Number of epochs per update
+    entropy_coef: float = 0.01  # Entropy coefficient for exploration
+    value_coef: float = 0.5  # Value loss coefficient
 
     def __post_init__(self):
         """Validate configuration after initialization"""

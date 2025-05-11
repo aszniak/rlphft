@@ -4,16 +4,8 @@ import torch.optim as optim
 import numpy as np
 import cv2
 from tqdm import tqdm
-
-# Hyperparameters
-HIDDEN_DIM = 256  # Number of neurons in hidden layers
-GAMMA = 0.99  # Discount factor for future rewards (closer to 1 = more long-term focus)
-CLIP_EPSILON = 0.2  # PPO clipping parameter to limit policy update size
-LEARNING_RATE = 1e-3  # Step size for optimizer updates
-BATCH_SIZE = 64  # Number of samples processed in each training mini-batch
-PPO_EPOCHS = 10  # Number of times to reuse each collected trajectory for updates
-ENTROPY_COEF = 0.01  # Coefficient for entropy bonus (higher = more exploration)
-VALUE_COEF = 0.5  # Coefficient for value loss in the total loss function
+from gymnasium.vector import AsyncVectorEnv
+import copy
 
 
 class RandomAgent:
@@ -35,7 +27,7 @@ class PolicyNetwork(nn.Module):
     A policy network that outputs a probability distribution over actions.
     """
 
-    def __init__(self, state_dim, action_dim, hidden_dim=HIDDEN_DIM):
+    def __init__(self, state_dim, action_dim, hidden_dim=256):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
@@ -57,7 +49,7 @@ class ValueNetwork(nn.Module):
     A value network that outputs a single value for a given state.
     """
 
-    def __init__(self, state_dim, hidden_dim=HIDDEN_DIM):
+    def __init__(self, state_dim, hidden_dim=256):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
@@ -82,24 +74,39 @@ class PPOAgent:
         self,
         state_dim,
         action_dim,
-        gamma=GAMMA,
-        clip_epsilon=CLIP_EPSILON,
-        lr=LEARNING_RATE,
+        hidden_dim=256,
+        gamma=0.99,
+        clip_epsilon=0.2,
+        learning_rate=1e-3,
         device=None,
+        config=None,
     ):
+        # If config is provided, use its values
+        if config:
+            hidden_dim = config.hidden_dim
+            gamma = config.gamma
+            clip_epsilon = config.clip_epsilon
+            learning_rate = config.learning_rate
+
         self.device = (
             device
             if device
             else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         )
-        self.policy = PolicyNetwork(state_dim, action_dim).to(self.device)
-        self.value = ValueNetwork(state_dim).to(self.device)
-        self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=lr)
-        self.value_optimizer = optim.Adam(self.value.parameters(), lr=lr)
+        print(f"Using device: {self.device}")
+        self.policy = PolicyNetwork(state_dim, action_dim, hidden_dim=hidden_dim).to(
+            self.device
+        )
+        self.value = ValueNetwork(state_dim, hidden_dim=hidden_dim).to(self.device)
+        self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate)
+        self.value_optimizer = optim.Adam(self.value.parameters(), lr=learning_rate)
         self.gamma = gamma
         self.clip_epsilon = clip_epsilon
         self.state_dim = state_dim
         self.action_dim = action_dim
+
+        # Save config if provided
+        self.config = config
 
         # Add these for tracking across all epochs
         self.total_training_steps = 0
@@ -116,6 +123,123 @@ class PPOAgent:
             dist = torch.distributions.Categorical(probs)
             action = dist.sample()
         return action.item(), dist.log_prob(action)
+
+    def select_actions_vectorized(self, states):
+        """Select actions for multiple states in parallel"""
+        # Set to evaluation mode for inference
+        self.policy.eval()
+        with torch.no_grad():
+            # states is already a batch
+            states_tensor = torch.FloatTensor(states).to(self.device)
+            probs = self.policy(states_tensor)
+            dist = torch.distributions.Categorical(probs)
+            actions = dist.sample()
+            log_probs = dist.log_prob(actions)
+        return actions.cpu().numpy(), log_probs.cpu().numpy()
+
+    def collect_trajectories_parallel(
+        self,
+        env_fn,
+        n_envs=8,  # Default value, can be overridden by config
+        steps_per_env=2048,
+    ):
+        """
+        Collect trajectories from multiple environments in parallel.
+
+        Args:
+            env_fn: Function that creates a single environment instance
+            n_envs: Number of parallel environments
+            steps_per_env: Number of steps to collect per environment
+
+        Returns:
+            Tuple of collected trajectory data
+        """
+        # Create vector of environments
+        env_fns = [env_fn for _ in range(n_envs)]
+        envs = AsyncVectorEnv(env_fns)
+
+        # Initialize storage
+        total_steps = n_envs * steps_per_env
+        states = np.zeros((total_steps, self.state_dim), dtype=np.float32)
+        actions = np.zeros(total_steps, dtype=np.int64)
+        rewards = np.zeros(total_steps, dtype=np.float32)
+        dones = np.zeros(total_steps, dtype=bool)
+        next_states = np.zeros((total_steps, self.state_dim), dtype=np.float32)
+        log_probs = np.zeros(total_steps, dtype=np.float32)
+        episode_lengths = []
+
+        # Reset all environments
+        obs, _ = envs.reset()
+
+        # Collect data
+        step_idx = 0
+        episode_reward = np.zeros(n_envs)
+        episode_length = np.zeros(n_envs, dtype=int)
+
+        pbar = tqdm(total=steps_per_env, desc="Collecting experience")
+
+        for t in range(steps_per_env):
+            # Get actions for all environments
+            action_values, log_prob_values = self.select_actions_vectorized(obs)
+
+            # Step environments
+            next_obs, reward, term, trunc, infos = envs.step(action_values)
+            done = np.logical_or(term, trunc)
+
+            # Store data
+            start_idx = t * n_envs
+            end_idx = start_idx + n_envs
+
+            states[start_idx:end_idx] = obs
+            actions[start_idx:end_idx] = action_values
+            rewards[start_idx:end_idx] = reward
+            dones[start_idx:end_idx] = done
+            next_states[start_idx:end_idx] = next_obs
+            log_probs[start_idx:end_idx] = log_prob_values
+
+            # Update episode tracking
+            episode_reward += reward
+            episode_length += 1
+
+            # Handle completed episodes
+            for i in range(n_envs):
+                if done[i]:
+                    self.all_episode_rewards.append(episode_reward[i])
+                    episode_lengths.append(episode_length[i])
+                    episode_reward[i] = 0
+                    episode_length[i] = 0
+
+            # Update state
+            obs = next_obs
+            step_idx += n_envs
+            pbar.update(1)
+
+            # Store info from last step
+            if t == steps_per_env - 1:
+                # Store the last info safely
+                if isinstance(infos, dict):
+                    # Handle dictionary type infos (common for vectorized envs)
+                    self.last_info = {}
+                    for key, values in infos.items():
+                        if isinstance(values, np.ndarray) and values.size > 0:
+                            # Take the first item if it's an array
+                            self.last_info[key] = values[0]
+                        else:
+                            self.last_info[key] = values
+                elif isinstance(infos, list) and len(infos) > 0:
+                    # Handle list type infos
+                    self.last_info = infos[0]
+                else:
+                    # Fallback
+                    self.last_info = infos
+
+        pbar.close()
+        envs.close()
+
+        # Set last_episode_rewards for backward compatibility
+        self.last_episode_rewards = self.all_episode_rewards[-n_envs:]
+
+        return states, actions, rewards, dones, next_states, log_probs, episode_lengths
 
     def compute_returns(self, rewards, dones, next_value):
         # Convert inputs to tensors if they aren't already
@@ -152,9 +276,19 @@ class PPOAgent:
         dones,
         next_states,
         old_log_probs,
-        batch_size=BATCH_SIZE,
-        epochs=PPO_EPOCHS,
+        batch_size=128,
+        epochs=10,
     ):
+        # Use config values if available
+        if self.config:
+            batch_size = self.config.batch_size
+            epochs = self.config.ppo_epochs
+            entropy_coef = self.config.entropy_coef
+            value_coef = self.config.value_coef
+        else:
+            entropy_coef = 0.01
+            value_coef = 0.5
+
         # Set to training mode for updates
         self.policy.train()
         self.value.train()
@@ -173,16 +307,18 @@ class PPOAgent:
         # Store epoch reward
         self.all_epoch_rewards.append(batch_reward)
 
+        # Process data in larger batches for GPU efficiency
         # Convert to tensors and move to device only once
         states = torch.FloatTensor(np.array(states)).to(self.device)
         actions = torch.LongTensor(np.array(actions)).to(self.device)
         old_log_probs = torch.FloatTensor(np.array(old_log_probs)).to(self.device)
+        rewards = torch.FloatTensor(np.array(rewards)).to(self.device)
+        dones = torch.BoolTensor(np.array(dones)).to(self.device)
+        next_states = torch.FloatTensor(np.array(next_states)).to(self.device)
 
         # Compute returns and advantages with tensors
         with torch.no_grad():
-            next_values = self.value(
-                torch.FloatTensor(np.array(next_states)).to(self.device)
-            ).squeeze(-1)
+            next_values = self.value(next_states).squeeze(-1)
 
         # Our compute_returns now returns a tensor, so no need to convert back and forth
         returns = self.compute_returns(
@@ -190,7 +326,8 @@ class PPOAgent:
         )
 
         # Calculate advantages
-        advantages = returns - self.value(states).squeeze(-1).detach()
+        values = self.value(states).squeeze(-1).detach()
+        advantages = returns - values
 
         # Normalize advantages (reduces variance)
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
@@ -199,26 +336,33 @@ class PPOAgent:
         for _ in range(epochs):
             # Generate random mini-batches
             indices = torch.randperm(len(states))
+
+            # Process in mini-batches
             for start_idx in range(0, len(states), batch_size):
                 # Get mini-batch
                 idx = indices[start_idx : start_idx + batch_size]
 
+                # Forward pass for both networks in a single batch
+                mini_states = states[idx]
+                mini_actions = actions[idx]
+
                 # Get new log probs and values
-                current_probs = self.policy(states[idx])
+                current_probs = self.policy(mini_states)
                 dist = torch.distributions.Categorical(current_probs)
-                current_log_probs = dist.log_prob(actions[idx])
+                current_log_probs = dist.log_prob(mini_actions)
                 entropy = dist.entropy().mean()
 
-                current_values = self.value(states[idx]).squeeze(-1)
+                current_values = self.value(mini_states).squeeze(-1)
 
                 # Compute ratio for PPO
                 ratio = torch.exp(current_log_probs - old_log_probs[idx])
 
                 # Compute PPO losses
-                surrogate1 = ratio * advantages[idx]
+                mini_advantages = advantages[idx]
+                surrogate1 = ratio * mini_advantages
                 surrogate2 = (
                     torch.clamp(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon)
-                    * advantages[idx]
+                    * mini_advantages
                 )
 
                 # Policy loss (negative because we're doing gradient ascent)
@@ -228,15 +372,20 @@ class PPOAgent:
                 value_loss = ((current_values - returns[idx]) ** 2).mean()
 
                 # Entropy bonus (encourages exploration)
-                entropy_loss = -ENTROPY_COEF * entropy
+                entropy_loss = -entropy_coef * entropy
 
                 # Total loss
-                total_loss = policy_loss + VALUE_COEF * value_loss + entropy_loss
+                total_loss = policy_loss + value_coef * value_loss + entropy_loss
 
                 # Update networks
                 self.policy_optimizer.zero_grad()
                 self.value_optimizer.zero_grad()
                 total_loss.backward()
+
+                # Clip gradients for stability (optional)
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
+                torch.nn.utils.clip_grad_norm_(self.value.parameters(), 0.5)
+
                 self.policy_optimizer.step()
                 self.value_optimizer.step()
 

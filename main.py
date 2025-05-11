@@ -185,6 +185,7 @@ def train_agent(
                 "model_type": "PPO",
                 "window_size": config.window_size,
                 "commission_rate": config.commission_rate,
+                "num_parallel_envs": config.num_parallel_envs,
             },
         )
 
@@ -194,37 +195,53 @@ def train_agent(
             f"Not enough data for {symbol}. Need at least {config.game_length * 2} candles."
         )
 
-    # Setup environment for training with random segments
-    env = TradingEnv(
-        data_dict=data_dict,
-        symbol=symbol,
-        initial_balance=initial_balance,
-        game_length=config.game_length,
-        window_size=config.window_size,
-        commission_rate=config.commission_rate,
-        random_start=True,
-        full_data_evaluation=False,  # Training mode uses random segments
-    )
+    # Create environment factory function for vectorization
+    def make_env():
+        return TradingEnv(
+            data_dict=data_dict,
+            symbol=symbol,
+            initial_balance=initial_balance,
+            game_length=config.game_length,
+            window_size=config.window_size,
+            commission_rate=config.commission_rate,
+            random_start=True,
+            full_data_evaluation=False,  # Training mode uses random segments
+        )
 
-    # Create agents
+    # Create one environment to get dimensions
+    env = make_env()
     feature_dim = env.observation_space.shape[0]
     action_dim = env.action_space.n
 
-    ppo_agent = PPOAgent(feature_dim, action_dim)
+    # Create agent with config
+    ppo_agent = PPOAgent(feature_dim, action_dim, config=config)
 
     # Training loop
     print(
-        f"{Fore.GREEN}🚀 Training on {symbol} for {num_epochs} epochs...{Style.RESET_ALL}"
+        f"{Fore.GREEN}🚀 Training on {symbol} for {num_epochs} epochs using {config.num_parallel_envs} parallel environments...{Style.RESET_ALL}"
     )
     epoch_rewards = []
 
     for epoch in tqdm(range(num_epochs), desc="Training Progress"):
-        # Collect trajectories and update agent
+        # Collect trajectories using parallel environments
         states, actions, rewards, dones, next_states, log_probs, _ = (
-            ppo_agent.collect_trajectories(env, steps_per_epoch)
+            ppo_agent.collect_trajectories_parallel(
+                make_env,
+                n_envs=config.num_parallel_envs,
+                steps_per_env=steps_per_epoch // config.num_parallel_envs,
+            )
         )
 
-        ppo_agent.update(states, actions, rewards, dones, next_states, log_probs)
+        # Update agent with collected data
+        ppo_agent.update(
+            states,
+            actions,
+            rewards,
+            dones,
+            next_states,
+            log_probs,
+            batch_size=config.batch_size,
+        )
 
         # Track performance - handle empty episode lists safely
         if (
@@ -252,8 +269,13 @@ def train_agent(
             }
 
             # Add portfolio value if available
-            if portfolio_value:
-                metrics["portfolio_value"] = portfolio_value
+            if portfolio_value is not None:
+                # Handle both single value and array cases
+                if isinstance(portfolio_value, (list, np.ndarray)):
+                    # If we have multiple values from parallel envs, use the mean
+                    metrics["portfolio_value"] = float(np.mean(portfolio_value))
+                else:
+                    metrics["portfolio_value"] = float(portfolio_value)
 
             # Add action distribution
             if len(actions) > 0:
@@ -578,6 +600,21 @@ def main():
     parser.add_argument("--epochs", type=int, help="Number of training epochs")
     parser.add_argument("--steps_per_epoch", type=int, help="Steps per epoch")
     parser.add_argument("--initial_balance", type=float, help="Initial balance")
+    parser.add_argument(
+        "--num_parallel_envs",
+        type=int,
+        help="Number of parallel environments for training",
+    )
+    parser.add_argument("--batch_size", type=int, help="Batch size for PPO updates")
+    parser.add_argument(
+        "--learning_rate", type=float, help="Learning rate for the optimizer"
+    )
+    parser.add_argument(
+        "--gamma", type=float, help="Discount factor for future rewards"
+    )
+    parser.add_argument(
+        "--ppo_epochs", type=int, help="Number of PPO epochs per update"
+    )
 
     # Evaluation arguments
     parser.add_argument(
@@ -631,6 +668,16 @@ def main():
         config.eval_episodes = args.episodes
     if args.wandb:
         config.use_wandb = True
+    if args.num_parallel_envs:
+        config.num_parallel_envs = args.num_parallel_envs
+    if args.batch_size:
+        config.batch_size = args.batch_size
+    if args.learning_rate:
+        config.learning_rate = args.learning_rate
+    if args.gamma:
+        config.gamma = args.gamma
+    if args.ppo_epochs:
+        config.ppo_epochs = args.ppo_epochs
     # Handle evaluation period options
     if args.random_eval:
         config.random_eval_period = True
