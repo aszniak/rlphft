@@ -142,6 +142,7 @@ class PPOAgent:
         env_fn,
         n_envs=8,  # Default value, can be overridden by config
         steps_per_env=2048,
+        disable_progress=False,  # Add parameter to disable progress bar
     ):
         """
         Collect trajectories from multiple environments in parallel.
@@ -150,6 +151,7 @@ class PPOAgent:
             env_fn: Function that creates a single environment instance
             n_envs: Number of parallel environments
             steps_per_env: Number of steps to collect per environment
+            disable_progress: Whether to disable the progress bar
 
         Returns:
             Tuple of collected trajectory data
@@ -176,9 +178,15 @@ class PPOAgent:
         episode_reward = np.zeros(n_envs)
         episode_length = np.zeros(n_envs, dtype=int)
 
-        pbar = tqdm(total=steps_per_env, desc="Collecting experience")
+        # Only show progress bar if not disabled
+        if disable_progress:
+            pbar = None
+            iterator = range(steps_per_env)
+        else:
+            pbar = tqdm(total=steps_per_env, desc="Collecting experience")
+            iterator = pbar
 
-        for t in range(steps_per_env):
+        for t in iterator:
             # Get actions for all environments
             action_values, log_prob_values = self.select_actions_vectorized(obs)
 
@@ -204,15 +212,22 @@ class PPOAgent:
             # Handle completed episodes
             for i in range(n_envs):
                 if done[i]:
-                    self.all_episode_rewards.append(episode_reward[i])
-                    episode_lengths.append(episode_length[i])
+                    self.all_episode_rewards.append(
+                        float(episode_reward[i])
+                    )  # Convert to Python float
+                    episode_lengths.append(
+                        int(episode_length[i])
+                    )  # Convert to Python int
                     episode_reward[i] = 0
                     episode_length[i] = 0
 
             # Update state
             obs = next_obs
             step_idx += n_envs
-            pbar.update(1)
+
+            # Update progress bar if it exists
+            if pbar:
+                pbar.update(1)
 
             # Store info from last step
             if t == steps_per_env - 1:
@@ -223,9 +238,17 @@ class PPOAgent:
                     for key, values in infos.items():
                         if isinstance(values, np.ndarray) and values.size > 0:
                             # Take the first item if it's an array
-                            self.last_info[key] = values[0]
+                            self.last_info[key] = (
+                                float(values[0])
+                                if np.issubdtype(values.dtype, np.number)
+                                else values[0]
+                            )
                         else:
-                            self.last_info[key] = values
+                            self.last_info[key] = (
+                                float(values)
+                                if isinstance(values, np.number)
+                                else values
+                            )
                 elif isinstance(infos, list) and len(infos) > 0:
                     # Handle list type infos
                     self.last_info = infos[0]
@@ -233,11 +256,18 @@ class PPOAgent:
                     # Fallback
                     self.last_info = infos
 
-        pbar.close()
+        # Close progress bar if it exists
+        if pbar:
+            pbar.close()
+
         envs.close()
 
         # Set last_episode_rewards for backward compatibility
-        self.last_episode_rewards = self.all_episode_rewards[-n_envs:]
+        self.last_episode_rewards = (
+            [float(r) for r in self.all_episode_rewards[-n_envs:]]
+            if self.all_episode_rewards
+            else []
+        )
 
         return states, actions, rewards, dones, next_states, log_probs, episode_lengths
 

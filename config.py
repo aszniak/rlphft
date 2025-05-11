@@ -47,7 +47,7 @@ class Config:
     eval_episodes: int = 5
     steps_per_epoch: int = 1440  # Exactly one 24-hour period per epoch
     epochs: int = 100
-    num_parallel_envs: int = 8  # Number of parallel environments for data collection
+    num_parallel_envs: int = os.cpu_count() - 1 # Number of parallel environments for data collection
     batch_size: int = 128  # Batch size for PPO updates
 
     # PPO Agent parameters

@@ -222,13 +222,18 @@ def train_agent(
     )
     epoch_rewards = []
 
-    for epoch in tqdm(range(num_epochs), desc="Training Progress"):
+    # Create a tqdm progress bar
+    progress_bar = tqdm(range(num_epochs), desc="Training Progress")
+    action_names = [a.name for a in TradingAction]
+
+    for epoch in progress_bar:
         # Collect trajectories using parallel environments
         states, actions, rewards, dones, next_states, log_probs, _ = (
             ppo_agent.collect_trajectories_parallel(
                 make_env,
                 n_envs=config.num_parallel_envs,
                 steps_per_env=steps_per_epoch // config.num_parallel_envs,
+                disable_progress=True,  # Disable the inner progress bar
             )
         )
 
@@ -248,27 +253,70 @@ def train_agent(
             hasattr(ppo_agent, "last_episode_rewards")
             and len(ppo_agent.last_episode_rewards) > 0
         ):
-            avg_reward = np.mean(ppo_agent.last_episode_rewards)
+            avg_episode_reward = float(np.mean(ppo_agent.last_episode_rewards))
         else:
-            avg_reward = 0.0  # Default if no episodes completed
+            avg_episode_reward = 0.0  # Default if no episodes completed
 
-        epoch_rewards.append(avg_reward)
+        # Also track average step reward since episodes may not complete in an epoch
+        avg_step_reward = float(np.mean(rewards)) if len(rewards) > 0 else 0.0
+
+        epoch_rewards.append(avg_step_reward)
 
         # Get final portfolio value for this epoch
-        portfolio_value = (
-            ppo_agent.last_info["total_portfolio_value"]
-            if hasattr(ppo_agent, "last_info") and ppo_agent.last_info is not None
-            else None
+        portfolio_value = None
+        if hasattr(ppo_agent, "last_info") and ppo_agent.last_info is not None:
+            if "total_portfolio_value" in ppo_agent.last_info:
+                portfolio_value = ppo_agent.last_info["total_portfolio_value"]
+                # Convert to native Python float if it's a numpy value
+                if isinstance(portfolio_value, (np.ndarray, np.number)):
+                    portfolio_value = float(portfolio_value)
+
+        # Calculate action distribution
+        action_dist = {}
+        if len(actions) > 0:
+            action_counts = np.bincount(actions, minlength=env.action_space.n)
+            action_freq = action_counts / len(actions)
+            # Create a short representation of action distribution
+            action_dist = {
+                action_names[i][:3]: f"{float(freq):.1%}"
+                for i, freq in enumerate(action_freq)
+            }
+
+        # Calculate completed episodes count
+        completed_episodes = (
+            int(len(ppo_agent.last_episode_rewards))
+            if hasattr(ppo_agent, "last_episode_rewards")
+            else 0
         )
+
+        # Update progress bar with portfolio value and avg reward
+        # We'll include just enough information to be useful without cluttering the display
+        postfix_dict = {
+            "port": (
+                f"${float(np.mean(portfolio_value)):.2f}"
+                if portfolio_value is not None
+                else "N/A"
+            ),
+            "step_r": f"{avg_step_reward:.4f}",
+            "eps": completed_episodes,
+        }
+        # Add action distribution to postfix
+        postfix_dict.update(action_dist)
+
+        # Update the progress bar
+        progress_bar.set_postfix(postfix_dict)
 
         # Log to W&B
         if use_wandb:
+            # Prepare metrics with explicit Python native types
             metrics = {
-                "epoch": epoch,
-                "avg_reward": avg_reward,
+                "epoch": int(epoch),
+                "avg_step_reward": float(avg_step_reward),
+                "avg_episode_reward": float(avg_episode_reward),
+                "completed_episodes": int(completed_episodes),
             }
 
-            # Add portfolio value if available
+            # Add portfolio value if available (convert to Python float)
             if portfolio_value is not None:
                 # Handle both single value and array cases
                 if isinstance(portfolio_value, (list, np.ndarray)):
@@ -277,14 +325,27 @@ def train_agent(
                 else:
                     metrics["portfolio_value"] = float(portfolio_value)
 
-            # Add action distribution
+            # Add action distribution (convert to Python float)
             if len(actions) > 0:
                 action_counts = np.bincount(actions, minlength=env.action_space.n)
                 action_freq = action_counts / len(actions)
                 for i, freq in enumerate(action_freq):
                     action_name = TradingAction(i).name.lower()
-                    metrics[f"action_freq_{action_name}"] = freq
+                    metrics[f"action_freq_{action_name}"] = float(freq)
 
+            # Add total rewards (sum of all rewards in this batch)
+            metrics["total_reward"] = (
+                float(np.sum(rewards)) if len(rewards) > 0 else 0.0
+            )
+
+            # Add extra debug info
+            metrics["rewards_min"] = float(np.min(rewards)) if len(rewards) > 0 else 0.0
+            metrics["rewards_max"] = float(np.max(rewards)) if len(rewards) > 0 else 0.0
+            metrics["rewards_nonzero"] = (
+                int(np.count_nonzero(rewards)) if len(rewards) > 0 else 0
+            )
+
+            # Log explicitly converted metrics to W&B
             wandb.log(metrics)
 
     # Save the trained model
