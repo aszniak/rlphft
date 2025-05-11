@@ -6,16 +6,24 @@ import cv2
 from tqdm import tqdm
 import argparse
 
+# Hyperparameters and constants
+DEFAULT_EPOCHS = 50  # Default number of training epochs
+STEPS_PER_EPOCH = 2000  # Number of environment steps per training epoch (4 x max episode length of 500)
+EVAL_EPISODES = 10  # Default number of episodes for evaluation
+TRAIN_EVAL_EPISODES = 3  # Number of episodes for evaluation during training
+PLOT_FIGSIZE = (10, 15)  # Figure size for the plots (width, height)
+TRAIN_WINDOW_SIZE = (800, 600)  # Window size for training env display
+EVAL_WINDOW_SIZE = (800, 600)  # Window size for evaluation env display
+
 # Create a single figure with three subplots for our three visualizations
 plt.ion()
-fig, axs = plt.subplots(3, 1, figsize=(10, 15))
+fig, axs = plt.subplots(3, 1, figsize=PLOT_FIGSIZE)
 fig.tight_layout(pad=5.0)
-lines = [None, None, None]  # Will hold line objects for each subplot
 
 
 def setup_plots():
     """Initialize the three plots with proper titles and labels"""
-    global lines, fig, axs
+    global fig, axs
 
     # Clear figure if it exists
     plt.figure(fig.number)
@@ -26,24 +34,26 @@ def setup_plots():
     axs[0].set_title("Random Agent Performance")
     axs[0].set_xlabel("Episode")
     axs[0].set_ylabel("Reward")
-    (lines[0],) = axs[0].plot([], [], "r-")
+    axs[0].set_ylim(0, 75)  # Random agent typically has low scores
+    axs[0].set_xlim(0, EVAL_EPISODES + 1)  # Set based on actual episodes
 
     # Training progress
     axs[1].set_title("PPO Training Progress")
     axs[1].set_xlabel("Epoch")
     axs[1].set_ylabel("Average Reward")
-    (lines[1],) = axs[1].plot([], [], "b-")
+    axs[1].set_ylim(0, 550)  # Full range for training progress
+    axs[1].set_xlim(0, DEFAULT_EPOCHS / 2)  # Show half the epochs initially
 
     # Trained agent performance
     axs[2].set_title("Trained Agent Performance")
     axs[2].set_xlabel("Episode")
     axs[2].set_ylabel("Reward")
-    (lines[2],) = axs[2].plot([], [], "g-")
+    axs[2].set_ylim(450, 510)  # Trained agent typically has high scores near max
+    axs[2].set_xlim(0, EVAL_EPISODES + 1)  # Set based on actual episodes
 
-    # Set initial axis limits
+    # Add grid to all plots
     for ax in axs:
-        ax.set_xlim(0, 20)
-        ax.set_ylim(0, 500)  # CartPole max is 500
+        ax.grid(True, linestyle="--", alpha=0.7)
 
     plt.tight_layout()
     plt.draw()
@@ -51,7 +61,12 @@ def setup_plots():
 
 
 def evaluate_agent(
-    agent, env, episodes=5, display=True, window_size=(1024, 768), plot_idx=None
+    agent,
+    env,
+    episodes=EVAL_EPISODES,
+    display=True,
+    window_size=EVAL_WINDOW_SIZE,
+    plot_idx=None,
 ):
     """Evaluate an agent and optionally update the corresponding plot"""
     total_rewards = []
@@ -79,25 +94,51 @@ def evaluate_agent(
 
         # Update the corresponding plot if specified
         if plot_idx is not None:
-            if plot_idx == 2:  # Special handling for trained agent plot
-                # COMPLETELY redraw the plot like we do for the training plot
-                axs[plot_idx].clear()
+            # COMPLETELY redraw the plot for consistent styling across all plots
+            axs[plot_idx].clear()
+
+            # Set title based on plot index
+            if plot_idx == 0:
+                axs[plot_idx].set_title("Random Agent Performance")
+            elif plot_idx == 2:
                 axs[plot_idx].set_title("Trained Agent Performance")
-                axs[plot_idx].set_xlabel("Episode")
-                axs[plot_idx].set_ylabel("Reward")
-                axs[plot_idx].plot(
-                    range(1, len(total_rewards) + 1), total_rewards, "go-", markersize=6
-                )
-                axs[plot_idx].set_xlim(0, max(episodes + 1, 21))
-                axs[plot_idx].set_ylim(0, 550)  # Fixed upper limit with margin
-                axs[plot_idx].grid(True, linestyle="--", alpha=0.7)
-            else:
-                # Original line data update for other plots
-                lines[plot_idx].set_data(
-                    range(1, len(total_rewards) + 1), total_rewards
-                )
-                axs[plot_idx].relim()
-                axs[plot_idx].autoscale_view()
+
+            axs[plot_idx].set_xlabel("Episode")
+            axs[plot_idx].set_ylabel("Reward")
+
+            # Plot with markers and connecting lines (use color based on plot index)
+            color = "r-" if plot_idx == 0 else "g-"
+            axs[plot_idx].plot(
+                range(1, len(total_rewards) + 1), total_rewards, color, markersize=6
+            )
+
+            # Auto-scale axes with appropriate limits for each plot type
+            max_reward = max(total_rewards) if total_rewards else 50
+            min_reward = min(total_rewards) if total_rewards else 0
+
+            if plot_idx == 0:  # Random agent (typically low scores)
+                # For random agent, scale based on actual performance with some headroom
+                upper_limit = min(200, max(75, max_reward * 1.5))
+                axs[plot_idx].set_ylim(0, upper_limit)
+            elif plot_idx == 2:  # Trained agent (typically high scores)
+                # For trained agent with perfect scores (near 500)
+                if max_reward > 480:
+                    # If all episodes reached max reward, zoom in to see small variations
+                    if min_reward > 480:
+                        axs[plot_idx].set_ylim(480, 510)
+                    else:
+                        # If some episodes didn't reach max, show from lowest to max+margin
+                        axs[plot_idx].set_ylim(max(0, min_reward - 20), 510)
+                else:
+                    # Otherwise use standard scaling with appropriate headroom
+                    upper_limit = min(500, max(200, max_reward * 1.2))
+                    axs[plot_idx].set_ylim(0, upper_limit)
+
+            # Ensure x-axis shows enough space for all episodes plus a small margin
+            axs[plot_idx].set_xlim(0, episodes + 1)
+
+            # Add grid for better readability
+            axs[plot_idx].grid(True, linestyle="--", alpha=0.7)
 
             # Force redraw
             fig.canvas.draw()
@@ -115,14 +156,24 @@ def evaluate_agent(
 def train_ppo(
     env,
     agent,
-    num_epochs=100,
-    steps_per_epoch=2048,
+    num_epochs=DEFAULT_EPOCHS,
+    steps_per_epoch=STEPS_PER_EPOCH,
     display_env=False,
-    window_size=(1024, 768),
+    window_size=TRAIN_WINDOW_SIZE,
 ):
     """Train the PPO agent and update the middle plot with training progress"""
     rewards_history = []
     eval_epochs = []  # Store epoch numbers for the x-axis (1-based)
+
+    # Track statistics on episodes
+    total_episodes = 0  # Count of complete episodes
+    all_episode_rewards = []  # List of all episode rewards
+    total_steps = 0  # Total steps taken across all epochs
+    incomplete_episodes = 0  # Count of episodes cut off at epoch boundaries
+
+    # How many episodes reached max reward (500)
+    perfect_episodes = 0
+    max_steps_in_episode = 500  # Maximum steps in a CartPole episode
 
     for epoch in tqdm(range(num_epochs), desc="Training PPO"):
         # Collect trajectories
@@ -135,8 +186,55 @@ def train_ppo(
         # Update agent
         agent.update(states, actions, rewards, dones, next_states, log_probs)
 
+        # Store all episode rewards
+        all_episode_rewards.extend(agent.last_episode_rewards)
+
+        # Update counters and statistics
+        epoch_episode_rewards = sum(agent.last_episode_rewards)
+        epoch_episodes = len(agent.last_episode_rewards)
+        total_episodes += epoch_episodes
+        total_steps += steps_per_epoch
+
+        # Track if the last episode was cut off (didn't terminate naturally)
+        last_episode_incomplete = False
+        if (
+            hasattr(agent, "last_episode_lengths")
+            and len(agent.last_episode_lengths) > 0
+        ):
+            # If the last episode has exactly the remainder steps and didn't terminate
+            if ep_lengths[-1] > 0:  # Positive length means it was incomplete
+                incomplete_episodes += 1
+                last_episode_incomplete = True
+
+        # Count perfect episodes (reward = 500)
+        perfect_in_epoch = 0
+        for reward in agent.last_episode_rewards:
+            if (
+                reward >= max_steps_in_episode
+            ):  # CartPole gives 1 reward per step, max is 500
+                perfect_episodes += 1
+                perfect_in_epoch += 1
+
+        # Calculate weighted average
+        epoch_avg_reward = (
+            epoch_episode_rewards / epoch_episodes if epoch_episodes > 0 else 0
+        )
+
+        # Report the epoch's episode rewards with concise formatting
+        incomplete_str = " (last episode incomplete)" if last_episode_incomplete else ""
+        perfect_str = (
+            f", perfect episodes: {perfect_in_epoch}/{epoch_episodes}"
+            if epoch_episodes > 0
+            else ""
+        )
+        tqdm.write(
+            f"Epoch {epoch+1}: {epoch_episodes} episodes{incomplete_str}, avg reward: {epoch_avg_reward:.1f}{perfect_str}"
+        )
+
         # Evaluate agent EVERY epoch - always do evaluation
-        eval_rewards = evaluate_agent(agent, env, episodes=3, display=False)
+        eval_rewards = evaluate_agent(
+            agent, env, episodes=TRAIN_EVAL_EPISODES, display=False
+        )
         avg_reward = np.mean(eval_rewards)
         rewards_history.append(avg_reward)
 
@@ -187,10 +285,33 @@ def train_ppo(
         fig.canvas.draw()
         plt.pause(0.1)
 
-    # After training is complete
-    agent.print_training_summary(rewards_history)
+    # After training is complete - print concise training summary
+    overall_avg_reward = (
+        sum(all_episode_rewards) / total_episodes if total_episodes > 0 else 0
+    )
+    steps_per_episode = total_steps / total_episodes if total_episodes > 0 else 0
+    perfect_episode_percentage = (
+        (perfect_episodes / total_episodes) * 100 if total_episodes > 0 else 0
+    )
 
-    return rewards_history, eval_epochs  # Return both for final plot
+    # Print training statistics (concise version)
+    tqdm.write(
+        f"Training complete: {total_episodes} episodes, {perfect_episodes} perfect ({perfect_episode_percentage:.1f}%), {incomplete_episodes} incomplete"
+    )
+
+    # Print info to match the training summary in the agent
+    agent.print_training_summary(
+        rewards_history,
+        overall_stats={
+            "total_episodes": total_episodes,
+            "avg_reward": overall_avg_reward,
+            "perfect_episodes": perfect_episodes,
+            "perfect_percentage": perfect_episode_percentage,
+            "incomplete_episodes": incomplete_episodes,
+        },
+    )
+
+    return rewards_history, eval_epochs, overall_avg_reward
 
 
 def main():
@@ -208,10 +329,13 @@ def main():
         help="Path to save/load the model",
     )
     parser.add_argument(
-        "--epochs", type=int, default=50, help="Number of training epochs"
+        "--epochs", type=int, default=DEFAULT_EPOCHS, help="Number of training epochs"
     )
     parser.add_argument(
-        "--eval_episodes", type=int, default=20, help="Number of evaluation episodes"
+        "--eval_episodes",
+        type=int,
+        default=EVAL_EPISODES,
+        help="Number of evaluation episodes",
     )
     args = parser.parse_args()
 
@@ -255,14 +379,17 @@ def main():
     # 2. Train PPO agent if needed
     if training_needed:
         tqdm.write("\nTraining PPO Agent...")
-        rewards_history, eval_epochs = train_ppo(
+        rewards_history, eval_epochs, overall_avg_reward = train_ppo(
             env,
             ppo_agent,
             num_epochs=args.epochs,
-            steps_per_epoch=2048,
+            steps_per_epoch=STEPS_PER_EPOCH,
             display_env=False,
-            window_size=(800, 600),
+            window_size=TRAIN_WINDOW_SIZE,
         )
+
+        # Print simple average reward summary
+        tqdm.write(f"Average episode reward: {overall_avg_reward:.2f}")
 
         # Save the trained model
         try:
@@ -273,7 +400,12 @@ def main():
     # 3. Evaluate trained PPO agent
     tqdm.write("\nTrained PPO Agent Performance:")
     ppo_rewards = evaluate_agent(
-        ppo_agent, env, episodes=args.eval_episodes, display=True, plot_idx=2
+        ppo_agent,
+        env,
+        episodes=args.eval_episodes,
+        display=True,
+        plot_idx=2,
+        window_size=EVAL_WINDOW_SIZE,
     )
 
     # Keep the plots open until user closes window

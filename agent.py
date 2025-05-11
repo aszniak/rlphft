@@ -341,9 +341,21 @@ class PPOAgent:
             tqdm.write("Creating a new model instead.")
             return None
 
-    def print_training_summary(self, eval_rewards=None):
+    def print_training_summary(self, eval_rewards=None, overall_stats=None):
         """Print a simple summary of the training performance"""
         print("\nTraining Summary:")
+
+        # Show overall statistics if provided
+        if overall_stats is not None:
+            print(f"Total Episodes: {overall_stats['total_episodes']}")
+            print(f"Overall Average Episode Reward: {overall_stats['avg_reward']:.2f}")
+            print(
+                f"Perfect Episodes: {overall_stats['perfect_episodes']}/{overall_stats['total_episodes']} ({overall_stats['perfect_percentage']:.1f}%)"
+            )
+            if "incomplete_episodes" in overall_stats:
+                print(
+                    f"Incomplete Episodes (cut off at epoch boundaries): {overall_stats['incomplete_episodes']}"
+                )
 
         # Only show evaluation rewards if provided
         if eval_rewards is not None and len(eval_rewards) > 0:
