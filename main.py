@@ -211,11 +211,6 @@ def train_agent(
             metrics = {
                 "epoch": epoch,
                 "avg_reward": avg_reward,
-                "episode_count": (
-                    len(ppo_agent.last_episode_rewards)
-                    if hasattr(ppo_agent, "last_episode_rewards")
-                    else 0
-                ),
             }
 
             # Add portfolio value if available
@@ -313,9 +308,7 @@ def evaluate_agents(
             )
             feature_dim = env.observation_space.shape[0]
             action_dim = env.action_space.n
-            trained_agent = PPOAgent.load_model(
-                trained_model_path, feature_dim, action_dim
-            )
+            trained_agent = PPOAgent.load_model(trained_model_path)
         else:
             raise ValueError(
                 f"No trained model found at {trained_model_path}. Please train first."
@@ -625,7 +618,7 @@ def main():
                 enhanced_data, symbol, config.initial_balance
             ).observation_space.shape[0]
             action_dim = len(TradingAction)
-            trained_agent = PPOAgent.load_model(model_path, feature_dim, action_dim)
+            trained_agent = PPOAgent.load_model(model_path)
 
         testnet_results = test_with_binance(
             trained_agent,

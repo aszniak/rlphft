@@ -6,14 +6,14 @@ import cv2
 from tqdm import tqdm
 
 # Hyperparameters
-HIDDEN_DIM = 256  # Number of neurons in hidden layers
-DROPOUT_RATE = 0.1  # Probability of dropping a neuron during training (regularization)
-GAMMA = 0.99  # Discount factor for future rewards (closer to 1 = more long-term focus)
-CLIP_EPSILON = 0.1  # PPO clipping parameter to limit policy update size
-LEARNING_RATE = 1e-3  # Step size for optimizer updates
-BATCH_SIZE = 128  # Number of samples processed in each training mini-batch
+HIDDEN_DIM = 2048  # Number of neurons in hidden layers
+DROPOUT_RATE = 0.2  # Probability of dropping a neuron during training (regularization)
+GAMMA = 0.995  # Discount factor for future rewards (closer to 1 = more long-term focus)
+CLIP_EPSILON = 0.2  # PPO clipping parameter to limit policy update size
+LEARNING_RATE = 3e-3  # Step size for optimizer updates
+BATCH_SIZE = 256  # Number of samples processed in each training mini-batch
 PPO_EPOCHS = 10  # Number of times to reuse each collected trajectory for updates
-ENTROPY_COEF = 0.01  # Coefficient for entropy bonus (higher = more exploration)
+ENTROPY_COEF = 0.015  # Coefficient for entropy bonus (higher = more exploration)
 VALUE_COEF = 0.5  # Coefficient for value loss in the total loss function
 
 

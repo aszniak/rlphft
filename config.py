@@ -43,7 +43,7 @@ class Config:
 
     # Training parameters
     eval_episodes: int = 5
-    steps_per_epoch: int = 2000
+    steps_per_epoch: int = 1440  # Exactly one 24-hour period per epoch
     epochs: int = 100
 
     def __post_init__(self):
