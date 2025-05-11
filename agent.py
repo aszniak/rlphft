@@ -127,6 +127,10 @@ class PPOAgent:
         if not isinstance(next_value, torch.Tensor):
             next_value = torch.tensor(next_value, dtype=torch.float32).to(self.device)
 
+        # Handle empty arrays
+        if len(rewards) == 0:
+            return torch.tensor([], dtype=torch.float32).to(self.device)
+
         # Pre-allocate returns tensor
         returns = torch.zeros_like(rewards).to(self.device)
 
@@ -249,54 +253,71 @@ class PPOAgent:
         ep_length = 0
         current_episode_reward = 0  # Track current episode's reward
 
-        # Use tqdm for steps collection - but disable if already in an outer tqdm
-        pbar = tqdm(range(num_steps), desc="Collecting steps", leave=False)
-        for step in pbar:
-            action, log_prob = self.select_action(state)
-            next_state, reward, terminated, truncated, _ = env.step(action)
+        self.last_info = None  # Initialize last_info
+        self.last_episode_rewards = []  # Initialize with empty list
+
+        for t in range(num_steps):
+            # Convert state to tensor and get action
+            if isinstance(state, np.ndarray):
+                state_tensor = torch.FloatTensor(state).to(self.device)
+            else:
+                state_tensor = state  # Assume already a tensor
+
+            # Get action from policy
+            self.policy.eval()  # Set to evaluation mode for action selection
+            with torch.no_grad():
+                probs = self.policy(state_tensor.unsqueeze(0))
+                dist = torch.distributions.Categorical(probs)
+                action = dist.sample()
+                log_prob = dist.log_prob(action)
+
+            # Convert to scalar values
+            action_value = action.item()
+            log_prob_value = log_prob.item()
+
+            # Take action in environment
+            next_state, reward, terminated, truncated, info = env.step(action_value)
             done = terminated or truncated
 
-            # Track episode reward
-            current_episode_reward += reward
+            # Store last info for portfolio value tracking
+            self.last_info = info
 
-            # Render if display is enabled
-            if display:
-                frame = env.render()
-                frame = cv2.resize(frame, window_size)
-                cv2.imshow("CartPole Training", frame)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-
-            # Store trajectory
+            # Append to trajectories
             states.append(state)
-            actions.append(action)
+            actions.append(action_value)
             rewards.append(reward)
             dones.append(done)
-            log_probs.append(log_prob.item())
+            log_probs.append(log_prob_value)
             next_states.append(next_state)
 
-            # Update state and episode length
-            state = next_state
+            # Update episodic information
+            current_episode_reward += reward
             ep_length += 1
 
-            # If episode ended, reset environment and store episode stats
+            # Handle episode completion
             if done:
                 episode_rewards.append(current_episode_reward)
+                self.last_episode_rewards.append(current_episode_reward)
                 episode_lengths.append(ep_length)
+
+                # Reset episode tracking variables
+                state, _ = env.reset()
                 current_episode_reward = 0
                 ep_length = 0
-                state, _ = env.reset()
-                done = False
-                pbar.set_postfix({"episodes_completed": len(episode_lengths)})
+            else:
+                state = next_state
 
-        # Store the last episode if not complete
-        if ep_length > 0:
-            episode_lengths.append(ep_length)
-            episode_rewards.append(current_episode_reward)
+            # Display if requested
+            if display:
+                frame = env.render()
+                if frame is not None:
+                    frame = cv2.resize(frame, window_size)
+                    cv2.imshow("Environment", frame)
+                    cv2.waitKey(1)
 
-        # Store for reporting
-        self.last_episode_rewards = episode_rewards
-        self.last_episode_lengths = episode_lengths
+        # Store all episode rewards for tracking
+        if episode_rewards:  # Only update if we have any completed episodes
+            self.all_episode_rewards.extend(episode_rewards)
 
         return states, actions, rewards, dones, next_states, log_probs, episode_lengths
 

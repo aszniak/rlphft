@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Union, Tuple
+from tqdm import tqdm
 from technical_indicators import add_technical_indicators, normalize_features
 
 
@@ -26,13 +27,13 @@ def fetch_and_cache_klines(
 
     # Check if cache file exists and we're not forcing a refresh
     if os.path.exists(cache_file) and not force_refresh:
-        print(f"Loading cached data from {cache_file}")
+        print(f"📂 Loading cached data from {cache_file}")
         with open(cache_file, "rb") as f:
             return pickle.load(f)
 
     # If we're here, we need to fetch the data
     print(
-        f"Fetching fresh data for {symbol} ({interval} interval, {lookback_days} days)"
+        f"🔄 Fetching fresh data for {symbol} ({interval} interval, {lookback_days} days)"
     )
     all_klines = []
 
@@ -41,6 +42,13 @@ def fetch_and_cache_klines(
     start_time = end_time - (lookback_days * 24 * 60 * 60 * 1000)
 
     current_end = end_time
+
+    # Calculate approximately how many API calls we'll need
+    estimated_calls = (end_time - start_time) // (limit * 60 * 1000) + 1
+
+    # Create progress bar
+    pbar = tqdm(total=estimated_calls, desc=f"Fetching {symbol}", unit="batch")
+    total_candles = 0
 
     # Make multiple API calls to get all the data
     while current_end > start_time:
@@ -66,6 +74,7 @@ def fetch_and_cache_klines(
 
         # Prepend the new klines to our collection
         all_klines = klines + all_klines
+        total_candles += len(klines)
 
         # Update the end time for the next request
         current_end = int(klines[0][0]) - 1  # Start time of first candle minus 1ms
@@ -73,11 +82,15 @@ def fetch_and_cache_klines(
         # Be nice to the API - add a small delay
         time.sleep(0.1)
 
-        # Status update
-        print(f"Retrieved {len(klines)} candles, total: {len(all_klines)}")
+        # Update the progress bar
+        pbar.update(1)
+        pbar.set_postfix({"candles": total_candles})
+
+    # Close the progress bar
+    pbar.close()
 
     # Save to cache
-    print(f"Saving data to cache: {cache_file}")
+    print(f"💾 Saving data to cache: {cache_file}")
     with open(cache_file, "wb") as f:
         pickle.dump(all_klines, f)
 

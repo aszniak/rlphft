@@ -4,11 +4,14 @@ import pandas as pd
 import numpy as np
 import torch
 from dotenv import load_dotenv
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # Keep for wandb visualization only
 from tqdm import tqdm
 import wandb
 import time
+import colorama
+from colorama import Fore, Style
 
+from config import Config, default_config
 from data_fetcher import (
     fetch_training_data,
     prepare_multi_asset_dataset,
@@ -16,59 +19,42 @@ from data_fetcher import (
 from agent import PPOAgent, RandomAgent
 from trading_env import TradingEnv, BuyAndHoldEnv, TradingAction
 
-# Load environment variables
+# Initialize colorama for cross-platform color support
+colorama.init()
+
+# Load environment variables from config
 load_dotenv("config.env")
-API_KEY = os.getenv("API_KEY")
-
-# ===== CONSTANTS =====
-# W&B settings
-WANDB_PROJECT = "crypto-trading-rl"
-WANDB_TEAM = "aszczesniak-aszczesniak"
-
-# Data settings
-DEFAULT_INTERVAL = "1m"  # 1-minute candles
-
-# Environment settings
-GAME_LENGTH = 1440  # 24 hours of minute candles
-WINDOW_SIZE = 30  # How many past candles to include in state
-COMMISSION_RATE = 0.001  # 0.1% commission rate (Binance standard)
-
-# Training parameters
-EVAL_EPISODES = 5
-STEPS_PER_EPOCH = 2000
-DEFAULT_EPOCHS = 100
-INITIAL_BALANCE = 10000.0
-
-# Hardcoded list of top cryptocurrencies by volume
-# These are the major coins with high liquidity
-TOP_CRYPTOCURRENCIES = [
-    "BTCUSDT",  # Bitcoin
-    "ETHUSDT",  # Ethereum
-    "BNBUSDT",  # Binance Coin
-    "SOLUSDT",  # Solana
-    "XRPUSDT",  # Ripple
-]
 
 
 def fetch_data(
-    symbols=None, interval=DEFAULT_INTERVAL, lookback_days=30, force_refresh=False
+    config=default_config,
+    symbols=None,
+    interval=None,
+    lookback_days=None,
+    force_refresh=None,
 ):
     """
     Fetch and prepare data for training or evaluation.
 
     Args:
-        symbols: List of cryptocurrency symbols to fetch
-        interval: Data interval (e.g., "1m" for 1-minute candles)
-        lookback_days: Days of historical data to fetch
-        force_refresh: Whether to force refresh cached data
+        config: Configuration object
+        symbols: List of cryptocurrency symbols to fetch (overrides config)
+        interval: Data interval (overrides config)
+        lookback_days: Days of historical data to fetch (overrides config)
+        force_refresh: Whether to force refresh cached data (overrides config)
 
     Returns:
         Dictionary of processed data with technical indicators
     """
-    if symbols is None:
-        symbols = TOP_CRYPTOCURRENCIES
+    # Use provided parameters or fall back to config values
+    symbols = symbols or config.symbols
+    interval = interval or config.interval
+    lookback_days = lookback_days if lookback_days is not None else config.lookback_days
+    force_refresh = force_refresh if force_refresh is not None else config.force_refresh
 
-    print("Fetching training data for cryptocurrencies...")
+    print(
+        f"{Fore.CYAN}🔍 Fetching training data for cryptocurrencies...{Style.RESET_ALL}"
+    )
     data_dict = fetch_training_data(
         symbols=symbols,
         interval=interval,
@@ -77,16 +63,18 @@ def fetch_data(
     )
 
     # Prepare dataset with additional features
-    print("Adding technical indicators and normalizing features...")
+    print(
+        f"{Fore.CYAN}📊 Adding technical indicators and normalizing features...{Style.RESET_ALL}"
+    )
     enhanced_data, combined_df = prepare_multi_asset_dataset(
         data_dict, add_indicators=True
     )
 
     # Print summary of the data
-    print("\nData Summary:")
+    print(f"\n{Fore.GREEN}📈 Data Summary:{Style.RESET_ALL}")
     for symbol, df in enhanced_data.items():
         print(
-            f"{symbol}: {len(df)} candles from {df['open_time'].iloc[0]} to {df['open_time'].iloc[-1]}"
+            f"{Fore.YELLOW}{symbol}{Style.RESET_ALL}: {len(df)} candles from {df['open_time'].iloc[0]} to {df['open_time'].iloc[-1]}"
         )
 
         # Print sample of technical indicator columns
@@ -113,12 +101,12 @@ def fetch_data(
 def train_agent(
     data_dict,
     symbol,
-    num_epochs=DEFAULT_EPOCHS,
-    steps_per_epoch=STEPS_PER_EPOCH,
-    initial_balance=INITIAL_BALANCE,
+    config=default_config,
+    num_epochs=None,
+    steps_per_epoch=None,
+    initial_balance=None,
     model_save_path=None,
-    display_plots=True,
-    use_wandb=False,
+    use_wandb=None,
 ):
     """
     Train a PPO agent for trading with optional W&B tracking.
@@ -126,38 +114,48 @@ def train_agent(
     Args:
         data_dict: Dictionary with processed price data
         symbol: Symbol to trade
-        num_epochs: Number of training epochs
-        steps_per_epoch: Steps per epoch
-        initial_balance: Initial trading balance
+        config: Configuration object
+        num_epochs: Number of training epochs (overrides config)
+        steps_per_epoch: Steps per epoch (overrides config)
+        initial_balance: Initial trading balance (overrides config)
         model_save_path: Path to save the trained model
-        display_plots: Whether to display performance plots
-        use_wandb: Whether to use Weights & Biases for tracking
+        use_wandb: Whether to use Weights & Biases for tracking (overrides config)
 
     Returns:
         Trained agent
     """
+    # Use provided parameters or fall back to config values
+    num_epochs = num_epochs if num_epochs is not None else config.epochs
+    steps_per_epoch = (
+        steps_per_epoch if steps_per_epoch is not None else config.steps_per_epoch
+    )
+    initial_balance = (
+        initial_balance if initial_balance is not None else config.initial_balance
+    )
+    use_wandb = use_wandb if use_wandb is not None else config.use_wandb
+
     # Initialize W&B if requested
     if use_wandb:
         wandb.init(
-            project=WANDB_PROJECT,
-            entity=WANDB_TEAM,
+            project=config.wandb_project,
+            entity=config.wandb_team,
             name=f"ppo-{symbol}-{time.strftime('%Y%m%d-%H%M%S')}",
             config={
                 "symbol": symbol,
                 "epochs": num_epochs,
                 "steps_per_epoch": steps_per_epoch,
                 "initial_balance": initial_balance,
-                "game_length": GAME_LENGTH,
+                "game_length": config.game_length,
                 "model_type": "PPO",
-                "window_size": WINDOW_SIZE,
-                "commission_rate": COMMISSION_RATE,
+                "window_size": config.window_size,
+                "commission_rate": config.commission_rate,
             },
         )
 
     # Check if we have enough data
-    if len(data_dict[symbol]) < GAME_LENGTH * 2:
+    if len(data_dict[symbol]) < config.game_length * 2:
         raise ValueError(
-            f"Not enough data for {symbol}. Need at least {GAME_LENGTH * 2} candles."
+            f"Not enough data for {symbol}. Need at least {config.game_length * 2} candles."
         )
 
     # Setup environment
@@ -165,9 +163,9 @@ def train_agent(
         data_dict=data_dict,
         symbol=symbol,
         initial_balance=initial_balance,
-        game_length=GAME_LENGTH,
-        window_size=WINDOW_SIZE,
-        commission_rate=COMMISSION_RATE,
+        game_length=config.game_length,
+        window_size=config.window_size,
+        commission_rate=config.commission_rate,
     )
 
     # Create agents
@@ -176,20 +174,13 @@ def train_agent(
 
     ppo_agent = PPOAgent(feature_dim, action_dim)
 
-    # Setup visualization if needed
-    if display_plots:
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.set_title("Training Progress")
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Average Reward")
-        ax.grid(True, linestyle="--", alpha=0.7)
-        plt.ion()  # Turn on interactive mode
-
     # Training loop
-    print(f"Training on {symbol} for {num_epochs} epochs...")
+    print(
+        f"{Fore.GREEN}🚀 Training on {symbol} for {num_epochs} epochs...{Style.RESET_ALL}"
+    )
     epoch_rewards = []
 
-    for epoch in tqdm(range(num_epochs)):
+    for epoch in tqdm(range(num_epochs), desc="Training Progress"):
         # Collect trajectories and update agent
         states, actions, rewards, dones, next_states, log_probs, _ = (
             ppo_agent.collect_trajectories(env, steps_per_epoch)
@@ -197,16 +188,21 @@ def train_agent(
 
         ppo_agent.update(states, actions, rewards, dones, next_states, log_probs)
 
-        # Track performance
-        avg_reward = np.mean(
-            ppo_agent.all_episode_rewards[-len(ppo_agent.last_episode_rewards) :]
-        )
+        # Track performance - handle empty episode lists safely
+        if (
+            hasattr(ppo_agent, "last_episode_rewards")
+            and len(ppo_agent.last_episode_rewards) > 0
+        ):
+            avg_reward = np.mean(ppo_agent.last_episode_rewards)
+        else:
+            avg_reward = 0.0  # Default if no episodes completed
+
         epoch_rewards.append(avg_reward)
 
         # Get final portfolio value for this epoch
         portfolio_value = (
             ppo_agent.last_info["total_portfolio_value"]
-            if hasattr(ppo_agent, "last_info")
+            if hasattr(ppo_agent, "last_info") and ppo_agent.last_info is not None
             else None
         )
 
@@ -215,7 +211,11 @@ def train_agent(
             metrics = {
                 "epoch": epoch,
                 "avg_reward": avg_reward,
-                "episode_count": len(ppo_agent.last_episode_rewards),
+                "episode_count": (
+                    len(ppo_agent.last_episode_rewards)
+                    if hasattr(ppo_agent, "last_episode_rewards")
+                    else 0
+                ),
             }
 
             # Add portfolio value if available
@@ -232,21 +232,10 @@ def train_agent(
 
             wandb.log(metrics)
 
-        # Display progress
-        if display_plots and (epoch + 1) % 10 == 0:
-            ax.clear()
-            ax.plot(range(1, len(epoch_rewards) + 1), epoch_rewards, "b-")
-            ax.set_title(f"Training Progress - {symbol}")
-            ax.set_xlabel("Epoch")
-            ax.set_ylabel("Average Reward")
-            ax.grid(True, linestyle="--", alpha=0.7)
-            plt.draw()
-            plt.pause(0.01)
-
     # Save the trained model
     if model_save_path:
         ppo_agent.save_model(model_save_path)
-        print(f"Model saved to {model_save_path}")
+        print(f"{Fore.GREEN}💾 Model saved to {model_save_path}{Style.RESET_ALL}")
 
         # Upload model to W&B
         if use_wandb:
@@ -256,21 +245,18 @@ def train_agent(
     if use_wandb:
         wandb.finish()
 
-    if display_plots:
-        plt.ioff()
-
     return ppo_agent
 
 
 def evaluate_agents(
     data_dict,
     symbol,
+    config=default_config,
     trained_agent=None,
     trained_model_path=None,
-    episodes=EVAL_EPISODES,
-    initial_balance=INITIAL_BALANCE,
-    display_plots=True,
-    use_wandb=False,
+    episodes=None,
+    initial_balance=None,
+    use_wandb=None,
 ):
     """
     Evaluate and compare agents: trained agent vs random agent vs buy and hold.
@@ -278,24 +264,31 @@ def evaluate_agents(
     Args:
         data_dict: Dictionary with processed price data
         symbol: Symbol to trade
+        config: Configuration object
         trained_agent: Pre-trained agent (if None, will load from trained_model_path)
         trained_model_path: Path to load a trained model
-        episodes: Number of evaluation episodes
-        initial_balance: Initial trading balance
-        display_plots: Whether to display performance plots
-        use_wandb: Whether to use Weights & Biases for tracking
+        episodes: Number of evaluation episodes (overrides config)
+        initial_balance: Initial trading balance (overrides config)
+        use_wandb: Whether to use Weights & Biases for tracking (overrides config)
 
     Returns:
         Dictionary with performance results
     """
+    # Use provided parameters or fall back to config values
+    episodes = episodes if episodes is not None else config.eval_episodes
+    initial_balance = (
+        initial_balance if initial_balance is not None else config.initial_balance
+    )
+    use_wandb = use_wandb if use_wandb is not None else config.use_wandb
+
     # Setup environments with fixed start for fair comparison
     env = TradingEnv(
         data_dict=data_dict,
         symbol=symbol,
         initial_balance=initial_balance,
-        game_length=GAME_LENGTH,
-        window_size=WINDOW_SIZE,
-        commission_rate=COMMISSION_RATE,
+        game_length=config.game_length,
+        window_size=config.window_size,
+        commission_rate=config.commission_rate,
         random_start=False,
     )
 
@@ -303,9 +296,9 @@ def evaluate_agents(
         data_dict=data_dict,
         symbol=symbol,
         initial_balance=initial_balance,
-        game_length=GAME_LENGTH,
-        window_size=WINDOW_SIZE,
-        commission_rate=COMMISSION_RATE,
+        game_length=config.game_length,
+        window_size=config.window_size,
+        commission_rate=config.commission_rate,
         random_start=False,
     )
 
@@ -315,7 +308,9 @@ def evaluate_agents(
             trained_model_path = f"saved_model_{symbol}"
 
         if os.path.exists(f"{trained_model_path}.pt"):
-            print(f"Loading trained model from {trained_model_path}")
+            print(
+                f"{Fore.CYAN}📂 Loading trained model from {trained_model_path}{Style.RESET_ALL}"
+            )
             feature_dim = env.observation_space.shape[0]
             action_dim = env.action_space.n
             trained_agent = PPOAgent.load_model(
@@ -329,74 +324,47 @@ def evaluate_agents(
     # Create random agent
     random_agent = RandomAgent(env.action_space.n)
 
-    # Setup visualization
-    if display_plots:
-        fig, axs = plt.subplots(3, 1, figsize=(10, 15))
-        fig.tight_layout(pad=5.0)
-
-        # Setup plot titles and labels
-        axs[0].set_title("Random Agent Performance")
-        axs[0].set_xlabel("Step")
-        axs[0].set_ylabel("Portfolio Value ($)")
-
-        axs[1].set_title("Buy and Hold Performance")
-        axs[1].set_xlabel("Step")
-        axs[1].set_ylabel("Portfolio Value ($)")
-
-        axs[2].set_title("Trained Agent Performance")
-        axs[2].set_xlabel("Step")
-        axs[2].set_ylabel("Portfolio Value ($)")
-
-        # Add grid to all plots
-        for ax in axs:
-            ax.grid(True, linestyle="--", alpha=0.7)
-
-        plt.tight_layout()
-        plt.ion()
-    else:
-        axs = [None, None, None]
-
     # Evaluate agents
-    print("\n--- Evaluation ---")
+    print(f"\n{Fore.GREEN}🔍 Evaluation{Style.RESET_ALL}")
 
     # Use fixed seeds for reproducibility
     random_seed = 42
 
     # Random agent
-    print("\nRandom Agent:")
+    print(f"\n{Fore.YELLOW}🎲 Random Agent:{Style.RESET_ALL}")
     env.reset(seed=random_seed)
-    random_perf = evaluate_agent(random_agent, env, episodes=episodes, plot_ax=axs[0])
+    random_perf = evaluate_agent(random_agent, env, episodes=episodes)
     random_return = (random_perf[-1] - random_perf[0]) / random_perf[0] * 100
 
     # Buy and hold
-    print("\nBuy and Hold Strategy:")
+    print(f"\n{Fore.YELLOW}📈 Buy and Hold Strategy:{Style.RESET_ALL}")
     buyhold_env.reset(seed=random_seed)
-    buyhold_perf = evaluate_agent(
-        random_agent, buyhold_env, episodes=episodes, plot_ax=axs[1]
-    )
+    buyhold_perf = evaluate_agent(random_agent, buyhold_env, episodes=episodes)
     buyhold_return = (buyhold_perf[-1] - buyhold_perf[0]) / buyhold_perf[0] * 100
 
     # Trained agent
-    print("\nTrained PPO Agent:")
+    print(f"\n{Fore.YELLOW}🤖 Trained PPO Agent:{Style.RESET_ALL}")
     env.reset(seed=random_seed)
-    ppo_perf = evaluate_agent(trained_agent, env, episodes=episodes, plot_ax=axs[2])
+    ppo_perf = evaluate_agent(trained_agent, env, episodes=episodes)
     ppo_return = (ppo_perf[-1] - ppo_perf[0]) / ppo_perf[0] * 100
 
     # Print summary
-    print("\n--- Performance Summary ---")
-    print(f"Random Agent: Final return = {random_return:.2f}%")
-    print(f"Buy and Hold: Final return = {buyhold_return:.2f}%")
-    print(f"Trained Agent: Final return = {ppo_return:.2f}%")
-
-    if display_plots:
-        plt.ioff()
-        plt.show()
+    print(f"\n{Fore.GREEN}📊 Performance Summary{Style.RESET_ALL}")
+    print(
+        f"{Fore.YELLOW}🎲 Random Agent:{Style.RESET_ALL} Final return = {Fore.CYAN}{random_return:.2f}%{Style.RESET_ALL}"
+    )
+    print(
+        f"{Fore.YELLOW}📈 Buy and Hold:{Style.RESET_ALL} Final return = {Fore.CYAN}{buyhold_return:.2f}%{Style.RESET_ALL}"
+    )
+    print(
+        f"{Fore.YELLOW}🤖 Trained Agent:{Style.RESET_ALL} Final return = {Fore.CYAN}{ppo_return:.2f}%{Style.RESET_ALL}"
+    )
 
     # Log comparison to W&B
     if use_wandb and not wandb.run:
         wandb.init(
-            project=WANDB_PROJECT,
-            entity=WANDB_TEAM,
+            project=config.wandb_project,
+            entity=config.wandb_team,
             name=f"eval-{symbol}-{time.strftime('%Y%m%d-%H%M%S')}",
             config={"symbol": symbol, "episodes": episodes},
         )
@@ -412,7 +380,7 @@ def evaluate_agents(
             }
         )
 
-        # Create a comparison plot and log it
+        # Create a comparison plot and log it to wandb
         fig, ax = plt.figure(figsize=(10, 6)), plt.axes()
         ax.plot(range(len(random_perf)), random_perf, "r-", label="Random")
         ax.plot(range(len(buyhold_perf)), buyhold_perf, "y-", label="Buy & Hold")
@@ -421,6 +389,7 @@ def evaluate_agents(
         ax.set_ylabel("Portfolio Value ($)")
         ax.legend()
         wandb.log({"performance_comparison": wandb.Image(fig)})
+        plt.close(fig)  # Close the figure after logging to wandb
 
         wandb.finish()
 
@@ -431,7 +400,7 @@ def evaluate_agents(
     }
 
 
-def evaluate_agent(agent, env, episodes=1, plot_ax=None):
+def evaluate_agent(agent, env, episodes=1):
     """
     Evaluate an agent's performance over multiple episodes.
 
@@ -439,7 +408,6 @@ def evaluate_agent(agent, env, episodes=1, plot_ax=None):
         agent: The agent to evaluate
         env: The environment to evaluate in
         episodes: Number of episodes to run
-        plot_ax: Matplotlib axis for plotting results
 
     Returns:
         List of portfolio values at each step for each episode
@@ -480,37 +448,12 @@ def evaluate_agent(agent, env, episodes=1, plot_ax=None):
 
     avg_portfolio_values = np.mean(padded_values, axis=0)
 
-    # Plot results if axis provided
-    if plot_ax is not None:
-        plot_ax.clear()
-
-        # Set title based on agent type
-        if isinstance(agent, RandomAgent):
-            plot_ax.set_title("Random Agent Performance")
-        elif isinstance(env, BuyAndHoldEnv):
-            plot_ax.set_title("Buy and Hold Performance")
-        else:
-            plot_ax.set_title("Trained Agent Performance")
-
-        # Plot individual episodes in light color
-        for i, values in enumerate(all_portfolio_values):
-            plot_ax.plot(range(len(values)), values, alpha=0.3)
-
-        # Plot average in bold
-        plot_ax.plot(
-            range(len(avg_portfolio_values)), avg_portfolio_values, "b-", linewidth=2
-        )
-
-        plot_ax.set_xlabel("Step")
-        plot_ax.set_ylabel("Portfolio Value ($)")
-        plot_ax.grid(True, linestyle="--", alpha=0.7)
-
     # Return the average portfolio values for comparison
     return avg_portfolio_values
 
 
 def test_with_binance(
-    agent, symbol, test_duration=GAME_LENGTH, initial_balance=INITIAL_BALANCE
+    agent, symbol, config=default_config, test_duration=None, initial_balance=None
 ):
     """
     Test the agent with Binance testnet.
@@ -519,18 +462,27 @@ def test_with_binance(
     Args:
         agent: The trained agent
         symbol: Symbol to trade
-        test_duration: Duration of the test in minutes
-        initial_balance: Initial balance
+        config: Configuration object
+        test_duration: Duration of the test in minutes (overrides config)
+        initial_balance: Initial balance (overrides config)
 
     Returns:
         Test results (placeholder)
     """
-    print("Binance testnet integration not implemented yet.")
+    # Use provided parameters or fall back to config values
+    test_duration = test_duration if test_duration is not None else config.game_length
+    initial_balance = (
+        initial_balance if initial_balance is not None else config.initial_balance
+    )
+
     print(
-        "This will allow you to test your agent on the Binance testnet with simulated trading."
+        f"{Fore.YELLOW}⚠️ Binance testnet integration not implemented yet.{Style.RESET_ALL}"
     )
     print(
-        f"Planned test: Trading {symbol} for {test_duration} minutes with ${initial_balance} initial balance."
+        f"{Fore.CYAN}This will allow you to test your agent on the Binance testnet with simulated trading.{Style.RESET_ALL}"
+    )
+    print(
+        f"{Fore.CYAN}Planned test: Trading {symbol} for {test_duration} minutes with ${initial_balance} initial balance.{Style.RESET_ALL}"
     )
     return {"status": "not_implemented"}
 
@@ -546,7 +498,7 @@ def main():
         help="Symbol to trade (default: BTCUSDT)",
     )
     parser.add_argument(
-        "--lookback_days", type=int, default=30, help="Days of historical data to use"
+        "--lookback_days", type=int, help="Days of historical data to use"
     )
     parser.add_argument(
         "--force_refresh", action="store_true", help="Force refresh data cache"
@@ -568,26 +520,18 @@ def main():
     )
 
     # Training arguments
-    parser.add_argument(
-        "--epochs", type=int, default=DEFAULT_EPOCHS, help="Number of training epochs"
-    )
-    parser.add_argument(
-        "--steps_per_epoch", type=int, default=STEPS_PER_EPOCH, help="Steps per epoch"
-    )
-    parser.add_argument(
-        "--initial_balance", type=float, default=INITIAL_BALANCE, help="Initial balance"
-    )
+    parser.add_argument("--epochs", type=int, help="Number of training epochs")
+    parser.add_argument("--steps_per_epoch", type=int, help="Steps per epoch")
+    parser.add_argument("--initial_balance", type=float, help="Initial balance")
 
     # Evaluation arguments
     parser.add_argument(
         "--episodes",
         type=int,
-        default=EVAL_EPISODES,
         help="Number of evaluation episodes",
     )
 
     # Misc arguments
-    parser.add_argument("--no_plots", action="store_true", help="Disable plotting")
     parser.add_argument(
         "--model_path",
         type=str,
@@ -602,8 +546,32 @@ def main():
 
     args = parser.parse_args()
 
+    # Create config from defaults and override with args
+    config = Config()
+
+    # Override config with args if provided
+    if args.symbol:
+        config.symbols = [args.symbol]
+    if args.lookback_days:
+        config.lookback_days = args.lookback_days
+    if args.force_refresh:
+        config.force_refresh = args.force_refresh
+    if args.epochs:
+        config.epochs = args.epochs
+    if args.steps_per_epoch:
+        config.steps_per_epoch = args.steps_per_epoch
+    if args.initial_balance:
+        config.initial_balance = args.initial_balance
+    if args.episodes:
+        config.eval_episodes = args.episodes
+    if args.wandb:
+        config.use_wandb = True
+
+    # Symbol to focus on (first in list)
+    symbol = config.symbols[0]
+
     # Determine model path
-    model_path = args.model_path if args.model_path else f"saved_model_{args.symbol}"
+    model_path = args.model_path if args.model_path else f"saved_model_{symbol}"
     model_exists = os.path.exists(f"{model_path}.pt")
 
     # Determine operation mode
@@ -615,64 +583,57 @@ def main():
 
     # Always fetch data first
     enhanced_data = fetch_data(
-        symbols=[args.symbol],
-        lookback_days=args.lookback_days,
-        force_refresh=args.force_refresh,
+        config=config,
+        symbols=[symbol],
     )
 
     # Train if needed
     trained_agent = None
     if mode_train:
-        print(f"\n{'=' * 40}")
-        print(f"Training agent for {args.symbol}")
-        print(f"{'=' * 40}")
+        print(f"\n{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}🏋️ Training agent for {symbol}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
         trained_agent = train_agent(
             enhanced_data,
-            args.symbol,
-            num_epochs=args.epochs,
-            steps_per_epoch=args.steps_per_epoch,
-            initial_balance=args.initial_balance,
+            symbol,
+            config=config,
             model_save_path=model_path,
-            display_plots=not args.no_plots,
-            use_wandb=args.wandb,
         )
 
     # Evaluate
     if mode_evaluate:
-        print(f"\n{'=' * 40}")
-        print(f"Evaluating performance for {args.symbol}")
-        print(f"{'=' * 40}")
+        print(f"\n{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}📊 Evaluating performance for {symbol}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
         results = evaluate_agents(
             enhanced_data,
-            args.symbol,
+            symbol,
+            config=config,
             trained_agent=trained_agent,
             trained_model_path=model_path,
-            episodes=args.episodes,
-            initial_balance=args.initial_balance,
-            display_plots=not args.no_plots,
-            use_wandb=args.wandb,
         )
 
     # Test with Binance testnet
     if mode_testnet:
-        print(f"\n{'=' * 40}")
-        print(f"Testing with Binance testnet for {args.symbol}")
-        print(f"{'=' * 40}")
+        print(f"\n{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
+        print(
+            f"{Fore.GREEN}🌐 Testing with Binance testnet for {symbol}{Style.RESET_ALL}"
+        )
+        print(f"{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
         if trained_agent is None:
             feature_dim = TradingEnv(
-                enhanced_data, args.symbol, args.initial_balance
+                enhanced_data, symbol, config.initial_balance
             ).observation_space.shape[0]
             action_dim = len(TradingAction)
             trained_agent = PPOAgent.load_model(model_path, feature_dim, action_dim)
 
         testnet_results = test_with_binance(
             trained_agent,
-            args.symbol,
-            test_duration=GAME_LENGTH,
-            initial_balance=args.initial_balance,
+            symbol,
+            config=config,
         )
 
-    print("\nDone!")
+    print(f"\n{Fore.GREEN}✅ Done!{Style.RESET_ALL}")
 
 
 if __name__ == "__main__":

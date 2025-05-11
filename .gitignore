@@ -39,6 +39,9 @@ pip-delete-this-directory.txt
 # Saved models
 *.pt
 
+# Wandb
+wandb/
+
 # Unit test / coverage reports
 htmlcov/
 .tox/
