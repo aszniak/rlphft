@@ -8,7 +8,10 @@ This project applies reinforcement learning techniques to cryptocurrency trading
 
 - Python 3.10 or higher
 - Requests, NumPy, Pandas, Matplotlib
+- PyTorch for reinforcement learning models
+- Gymnasium for RL environments
 - SSH key for Binance API authentication (optional)
+- Weights & Biases for experiment tracking (optional)
 
 ### CartPole RL Components
 
@@ -26,6 +29,44 @@ You can install all dependencies with:
 # Or use a virtual environment for the RL components
 ./update_packages.sh --venv
 ```
+
+## Cryptocurrency Trading Implementation
+
+This project implements a Proximal Policy Optimization (PPO) agent for cryptocurrency trading. The agent learns to make optimal trading decisions based on historical price data and technical indicators.
+
+### Running the Trading Agent
+
+For convenience, use the provided shell script:
+
+```bash
+# Run with default settings (will load saved model if available)
+./run.sh main.py --symbol BTCUSDT
+
+# Force training a new model even if one exists
+./run.sh main.py --symbol BTCUSDT --train
+
+# Specify the number of days of historical data to use
+./run.sh main.py --symbol ETHUSDT --lookback_days 60
+
+# Train with specific parameters
+./run.sh main.py --symbol BTCUSDT --train --epochs 200 --initial_balance 20000
+
+# Evaluate with different episodes
+./run.sh main.py --symbol BTCUSDT --evaluate --episodes 10
+
+# Enable Weights & Biases tracking
+./run.sh main.py --symbol BTCUSDT --wandb
+```
+
+### Features of the Trading Implementation
+
+- **Trading Environment**: A Gymnasium-compatible environment simulating cryptocurrency trading
+- **PPO Agent**: Implementation of the PPO algorithm for trading optimization
+- **Multi-Asset Support**: Support for trading multiple cryptocurrencies
+- **Configurable Parameters**: Comprehensive configuration system through `config.py`
+- **Technical Indicators**: Automated calculation of technical indicators as features
+- **Evaluation Framework**: Comparison with baseline strategies (Random, Buy & Hold)
+- **W&B Integration**: Optional tracking of training/evaluation metrics with Weights & Biases
 
 ## CartPole Implementation
 
@@ -122,12 +163,13 @@ If you need to install or update packages, use:
 
 - **Main Scripts:**
 
-  - `main.py` - Main script to fetch and process cryptocurrency data
+  - `main.py` - Main script for cryptocurrency trading with RL
   - `cartpole.py` - Main file for running the CartPole environment with visualization
 
 - **Agents and Models:**
 
-  - `agent.py` - Implementation of the PPO agent and policy/value networks for CartPole
+  - `agent.py` - Implementation of the PPO and other agents
+  - `trading_env.py` - Gymnasium-compatible trading environment
 
 - **Data Processing:**
 
@@ -135,16 +177,34 @@ If you need to install or update packages, use:
   - `technical_indicators.py` - Implementations of technical indicators
   - `visualize_indicators.py` - Visualization of technical indicators
 
-- **Helper Scripts:**
+- **Configuration:**
 
+  - `config.py` - Centralized configuration system for the trading agent
+  - `config.env` - Environment variables and API keys (gitignored)
+  - `requirements.txt` - List of required Python packages
+
+- **Helper Scripts:**
   - `run.sh` - Helper script to run Python scripts with the correct version
   - `run_cartpole.sh` - Helper script for running the CartPole environment
   - `run_visualization.sh` - Script for visualizing technical indicators
   - `update_packages.sh` - Helper script to install/update required packages
 
-- **Configuration:**
-  - `requirements.txt` - List of required Python packages
-  - `config.env` - Configuration file for API keys (gitignored)
+## Configuration System
+
+The project uses a centralized configuration system in `config.py` that allows for:
+
+- **Default Configuration**: Sensible defaults for all parameters
+- **Environment Overrides**: Load values from `config.env` file
+- **Command Line Arguments**: Override configuration via command line
+- **Runtime Modifications**: Programmatically modify configuration as needed
+
+The configuration includes settings for:
+
+- **Data Fetching**: Trading symbols, timeframes, lookback periods
+- **Environment Parameters**: Game length, window size, commission rates
+- **Training Settings**: Episodes, epochs, steps per epoch
+- **Evaluation Settings**: Number of episodes, initial balance
+- **Experiment Tracking**: W&B project and team settings
 
 ## Features
 
@@ -153,8 +213,9 @@ If you need to install or update packages, use:
 - Calculate over 30 technical indicators for market analysis
 - Normalize data for machine learning applications
 - Visualize price data with technical indicators
-- Detect potential market inefficiencies (e.g., volume spikes, gaps, divergences)
-- Framework for developing RL-based trading strategies
+- Train RL agents to detect potential market inefficiencies and execute trades
+- Evaluate trading strategies against baselines
+- Track experiments with W&B (optional)
 
 ## Reinforcement Learning Approach
 
@@ -164,7 +225,7 @@ This project aims to develop RL agents that can:
 2. **Learn Optimal Strategies**: Optimize entry/exit points and position sizing
 3. **Adapt to Market Conditions**: Dynamically adjust to changing market regimes
 
-The RL environment will be built on top of the data processing pipeline, using preprocessed and normalized technical indicators as input features.
+The RL environment is built on top of the data processing pipeline, using preprocessed and normalized technical indicators as input features.
 
 ## Authentication
 
