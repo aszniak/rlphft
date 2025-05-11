@@ -23,11 +23,7 @@ This project applies reinforcement learning techniques to cryptocurrency trading
 You can install all dependencies with:
 
 ```bash
-# Install for system Python
-./update_packages.sh
-
-# Or use a virtual environment for the RL components
-./update_packages.sh --venv
+pip install -r requirements.txt
 ```
 
 ## Cryptocurrency Trading Implementation
@@ -36,26 +32,26 @@ This project implements a Proximal Policy Optimization (PPO) agent for cryptocur
 
 ### Running the Trading Agent
 
-For convenience, use the provided shell script:
+To run the cryptocurrency trading system:
 
 ```bash
 # Run with default settings (will load saved model if available)
-./run.sh main.py --symbol BTCUSDT
+python main.py --symbol BTCUSDT
 
 # Force training a new model even if one exists
-./run.sh main.py --symbol BTCUSDT --train
+python main.py --symbol BTCUSDT --train
 
 # Specify the number of days of historical data to use
-./run.sh main.py --symbol ETHUSDT --lookback_days 60
+python main.py --symbol ETHUSDT --lookback_days 60
 
 # Train with specific parameters
-./run.sh main.py --symbol BTCUSDT --train --epochs 200 --initial_balance 20000
+python main.py --symbol BTCUSDT --train --epochs 200 --initial_balance 20000
 
 # Evaluate with different episodes
-./run.sh main.py --symbol BTCUSDT --evaluate --episodes 10
+python main.py --symbol BTCUSDT --evaluate --episodes 10
 
 # Enable Weights & Biases tracking
-./run.sh main.py --symbol BTCUSDT --wandb
+python main.py --symbol BTCUSDT --wandb
 ```
 
 ### Features of the Trading Implementation
@@ -74,29 +70,23 @@ Before applying RL to the more complex domain of cryptocurrency trading, we've i
 
 ### Running the CartPole Environment
 
-For convenience, use the provided shell script:
+To run the CartPole environment:
 
 ```bash
 # Run with default settings (will load saved model if available)
-./run_cartpole.sh
+python cartpole.py
 
 # Force training a new model even if one exists
-./run_cartpole.sh --train
+python cartpole.py --train
 
 # Specify a custom path for saving/loading the model
-./run_cartpole.sh --model_path my_model
+python cartpole.py --model_path my_model
 
 # Set the number of training epochs
-./run_cartpole.sh --train --epochs 100
+python cartpole.py --train --epochs 100
 
 # Set the number of evaluation episodes
-./run_cartpole.sh --eval_episodes 30
-```
-
-Alternatively, you can run the Python script directly:
-
-```bash
-python cartpole.py [arguments]
+python cartpole.py --eval_episodes 30
 ```
 
 ### Features of the CartPole Implementation
@@ -116,31 +106,18 @@ python cartpole.py [arguments]
 
 ## Python Setup
 
-The project uses Python 3.10 for all scripts, as it has the necessary packages installed.
-
-### Running Scripts
-
-Instead of using `python script.py`, use the provided shell script:
-
-```bash
-./run.sh script.py [arguments]
-```
-
-This ensures all scripts run with the correct Python version and environment.
+The project is compatible with Python 3.10 or higher. Make sure you have all the required dependencies installed.
 
 ### Visualization
 
 To visualize the technical indicators:
 
 ```bash
-# Visualize a random cryptocurrency
-./run_visualization.sh
-
 # Visualize a specific cryptocurrency
-./run_visualization.sh BTCUSDT
+python visualize_indicators.py --symbol BTCUSDT
 
 # Visualize a specific cryptocurrency with a custom timeframe (days)
-./run_visualization.sh ETHUSDT 3
+python visualize_indicators.py --symbol ETHUSDT --days 3
 ```
 
 This will generate a PNG file showing the selected cryptocurrency with all technical indicators, including:
@@ -150,14 +127,6 @@ This will generate a PNG file showing the selected cryptocurrency with all techn
 - RSI and Stochastic oscillators
 - MACD
 - ATR (Average True Range) and Z-Score
-
-### Updating Packages
-
-If you need to install or update packages, use:
-
-```bash
-./update_packages.sh
-```
 
 ## Project Structure
 
@@ -182,12 +151,6 @@ If you need to install or update packages, use:
   - `config.py` - Centralized configuration system for the trading agent
   - `config.env` - Environment variables and API keys (gitignored)
   - `requirements.txt` - List of required Python packages
-
-- **Helper Scripts:**
-  - `run.sh` - Helper script to run Python scripts with the correct version
-  - `run_cartpole.sh` - Helper script for running the CartPole environment
-  - `run_visualization.sh` - Script for visualizing technical indicators
-  - `update_packages.sh` - Helper script to install/update required packages
 
 ## Configuration System
 
