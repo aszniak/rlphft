@@ -21,8 +21,10 @@ class Config:
 
     # Data settings
     interval: str = "1m"  # 1-minute candles
-    lookback_days: int = 30
+    training_lookback_days: int = 100  # 144,000 candles (100 days)
+    eval_lookback_days: int = 30  # Standard 30-day period
     force_refresh: bool = False
+    random_eval_period: bool = True  # Use random 30-day window for evaluation
 
     # Trading symbols
     symbols: List[str] = field(

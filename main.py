@@ -32,6 +32,7 @@ def fetch_data(
     interval=None,
     lookback_days=None,
     force_refresh=None,
+    for_training=True,  # New parameter to indicate training vs evaluation
 ):
     """
     Fetch and prepare data for training or evaluation.
@@ -42,6 +43,7 @@ def fetch_data(
         interval: Data interval (overrides config)
         lookback_days: Days of historical data to fetch (overrides config)
         force_refresh: Whether to force refresh cached data (overrides config)
+        for_training: Whether data is for training (True) or evaluation (False)
 
     Returns:
         Dictionary of processed data with technical indicators
@@ -49,17 +51,51 @@ def fetch_data(
     # Use provided parameters or fall back to config values
     symbols = symbols or config.symbols
     interval = interval or config.interval
-    lookback_days = lookback_days if lookback_days is not None else config.lookback_days
+
+    # Choose appropriate lookback period based on whether we're training or evaluating
+    if lookback_days is None:
+        lookback_days = (
+            config.training_lookback_days if for_training else config.eval_lookback_days
+        )
+
     force_refresh = force_refresh if force_refresh is not None else config.force_refresh
 
+    # For evaluation, we can select a random period if configured
+    random_start_date = None
+    if not for_training and config.random_eval_period:
+        # Calculate a random start date within the last year (adjust as needed)
+        # This gives us a random 30-day window for evaluation
+        import datetime
+        import random
+
+        now = datetime.datetime.now()
+        max_days_ago = 365 * 2  # Expand to 2 years maximum (was 365 days)
+        min_days_ago = (
+            config.eval_lookback_days + 30
+        )  # At least 30 days after minimum lookback
+        random_days = random.randint(min_days_ago, max_days_ago)
+        random_start_date = now - datetime.timedelta(days=random_days)
+        print(
+            f"{Fore.CYAN}🎲 Using random evaluation period starting {random_days} days ago ({random_start_date.strftime('%Y-%m-%d')}){Style.RESET_ALL}"
+        )
+
     print(
-        f"{Fore.CYAN}🔍 Fetching training data for cryptocurrencies...{Style.RESET_ALL}"
+        f"{Fore.CYAN}🔍 Fetching {'training' if for_training else 'evaluation'} data for cryptocurrencies...{Style.RESET_ALL}"
     )
+
+    # Update the fetch_training_data function call to include the random_start_date parameter
     data_dict = fetch_training_data(
         symbols=symbols,
         interval=interval,
         lookback_days=lookback_days,
-        force_refresh=force_refresh,
+        force_refresh=force_refresh
+        or (
+            not for_training and config.random_eval_period
+        ),  # Force refresh for random eval periods
+        start_date=random_start_date,
+        cache_suffix=(
+            f"_{random_days}days_ago" if random_start_date else None
+        ),  # Add date-specific suffix to cache
     )
 
     # Prepare dataset with additional features
@@ -158,7 +194,7 @@ def train_agent(
             f"Not enough data for {symbol}. Need at least {config.game_length * 2} candles."
         )
 
-    # Setup environment
+    # Setup environment for training with random segments
     env = TradingEnv(
         data_dict=data_dict,
         symbol=symbol,
@@ -166,6 +202,8 @@ def train_agent(
         game_length=config.game_length,
         window_size=config.window_size,
         commission_rate=config.commission_rate,
+        random_start=True,
+        full_data_evaluation=False,  # Training mode uses random segments
     )
 
     # Create agents
@@ -276,25 +314,27 @@ def evaluate_agents(
     )
     use_wandb = use_wandb if use_wandb is not None else config.use_wandb
 
-    # Setup environments with fixed start for fair comparison
+    # Setup environments for full data evaluation
     env = TradingEnv(
         data_dict=data_dict,
         symbol=symbol,
         initial_balance=initial_balance,
-        game_length=config.game_length,
+        game_length=len(data_dict[symbol]) - config.window_size,  # Use full data length
         window_size=config.window_size,
         commission_rate=config.commission_rate,
         random_start=False,
+        full_data_evaluation=True,  # Evaluation mode uses full dataset
     )
 
     buyhold_env = BuyAndHoldEnv(
         data_dict=data_dict,
         symbol=symbol,
         initial_balance=initial_balance,
-        game_length=config.game_length,
+        game_length=len(data_dict[symbol]) - config.window_size,  # Use full data length
         window_size=config.window_size,
         commission_rate=config.commission_rate,
         random_start=False,
+        full_data_evaluation=True,  # Evaluation mode uses full dataset
     )
 
     # Load or use trained agent
@@ -395,24 +435,18 @@ def evaluate_agents(
 
 def evaluate_agent(agent, env, episodes=1):
     """
-    Evaluate an agent's performance over multiple episodes.
-
-    Args:
-        agent: The agent to evaluate
-        env: The environment to evaluate in
-        episodes: Number of episodes to run
-
-    Returns:
-        List of portfolio values at each step for each episode
+    Evaluate an agent's performance.
+    For full data evaluation, only runs one episode through the entire dataset.
     """
-    all_portfolio_values = []
-    all_timestamps = []
-
-    for ep in range(episodes):
+    if env.full_data_evaluation:
+        # For full dataset evaluation, we only run one episode
         state, info = env.reset()
         done = False
         portfolio_values = [info["total_portfolio_value"]]
         timestamps = [info["timestamp"]]
+
+        # Create progress bar for long evaluation
+        progress_bar = tqdm(desc="Evaluating on full dataset", unit="step")
 
         while not done:
             action, _ = agent.select_action(state)
@@ -421,28 +455,56 @@ def evaluate_agent(agent, env, episodes=1):
 
             portfolio_values.append(info["total_portfolio_value"])
             timestamps.append(info["timestamp"])
+            progress_bar.update(1)
 
-        all_portfolio_values.append(portfolio_values)
-        all_timestamps.append(timestamps)
+        progress_bar.close()
 
-        print(f"Episode {ep+1}: Final portfolio value = ${portfolio_values[-1]:.2f}")
+        print(
+            f"Full dataset evaluation: Final portfolio value = ${portfolio_values[-1]:.2f}"
+        )
+        return portfolio_values
+    else:
+        # Original code for multiple episode evaluation
+        all_portfolio_values = []
+        all_timestamps = []
 
-    # Calculate average portfolio value across episodes
-    max_length = max(len(values) for values in all_portfolio_values)
-    padded_values = []
+        for ep in range(episodes):
+            state, info = env.reset()
+            done = False
+            portfolio_values = [info["total_portfolio_value"]]
+            timestamps = [info["timestamp"]]
 
-    for values in all_portfolio_values:
-        # Pad shorter episodes with their last value
-        if len(values) < max_length:
-            padded = values + [values[-1]] * (max_length - len(values))
-        else:
-            padded = values
-        padded_values.append(padded)
+            while not done:
+                action, _ = agent.select_action(state)
+                state, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
 
-    avg_portfolio_values = np.mean(padded_values, axis=0)
+                portfolio_values.append(info["total_portfolio_value"])
+                timestamps.append(info["timestamp"])
 
-    # Return the average portfolio values for comparison
-    return avg_portfolio_values
+            all_portfolio_values.append(portfolio_values)
+            all_timestamps.append(timestamps)
+
+            print(
+                f"Episode {ep+1}: Final portfolio value = ${portfolio_values[-1]:.2f}"
+            )
+
+        # Calculate average portfolio value across episodes
+        max_length = max(len(values) for values in all_portfolio_values)
+        padded_values = []
+
+        for values in all_portfolio_values:
+            # Pad shorter episodes with their last value
+            if len(values) < max_length:
+                padded = values + [values[-1]] * (max_length - len(values))
+            else:
+                padded = values
+            padded_values.append(padded)
+
+        avg_portfolio_values = np.mean(padded_values, axis=0)
+
+        # Return the average portfolio values for comparison
+        return avg_portfolio_values
 
 
 def test_with_binance(
@@ -523,6 +585,16 @@ def main():
         type=int,
         help="Number of evaluation episodes",
     )
+    parser.add_argument(
+        "--random_eval",
+        action="store_true",
+        help="Use a random 30-day period for evaluation (different from training data)",
+    )
+    parser.add_argument(
+        "--fixed_eval",
+        action="store_true",
+        help="Use the most recent 30-day period for evaluation (disables random evaluation)",
+    )
 
     # Misc arguments
     parser.add_argument(
@@ -559,6 +631,11 @@ def main():
         config.eval_episodes = args.episodes
     if args.wandb:
         config.use_wandb = True
+    # Handle evaluation period options
+    if args.random_eval:
+        config.random_eval_period = True
+    if args.fixed_eval:
+        config.random_eval_period = False
 
     # Symbol to focus on (first in list)
     symbol = config.symbols[0]
@@ -567,6 +644,9 @@ def main():
     model_path = args.model_path if args.model_path else f"saved_model_{symbol}"
     model_exists = os.path.exists(f"{model_path}.pt")
 
+    # Initialize trained_agent to None
+    trained_agent = None
+
     # Determine operation mode
     mode_train = args.train or not model_exists
     mode_evaluate = args.evaluate or (
@@ -574,32 +654,31 @@ def main():
     )
     mode_testnet = args.testnet
 
-    # Always fetch data first
-    enhanced_data = fetch_data(
-        config=config,
-        symbols=[symbol],
-    )
-
-    # Train if needed
-    trained_agent = None
+    # Fetch training data first
     if mode_train:
         print(f"\n{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
         print(f"{Fore.GREEN}🏋️ Training agent for {symbol}{Style.RESET_ALL}")
         print(f"{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
+
+        training_data = fetch_data(config=config, symbols=[symbol], for_training=True)
+
         trained_agent = train_agent(
-            enhanced_data,
+            training_data,
             symbol,
             config=config,
             model_save_path=model_path,
         )
 
-    # Evaluate
+    # Fetch evaluation data separately
     if mode_evaluate:
         print(f"\n{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
         print(f"{Fore.GREEN}📊 Evaluating performance for {symbol}{Style.RESET_ALL}")
         print(f"{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
+
+        eval_data = fetch_data(config=config, symbols=[symbol], for_training=False)
+
         results = evaluate_agents(
-            enhanced_data,
+            eval_data,
             symbol,
             config=config,
             trained_agent=trained_agent,
@@ -615,7 +694,7 @@ def main():
         print(f"{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
         if trained_agent is None:
             feature_dim = TradingEnv(
-                enhanced_data, symbol, config.initial_balance
+                eval_data, symbol, config.initial_balance
             ).observation_space.shape[0]
             action_dim = len(TradingAction)
             trained_agent = PPOAgent.load_model(model_path)

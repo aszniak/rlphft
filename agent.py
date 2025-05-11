@@ -6,14 +6,13 @@ import cv2
 from tqdm import tqdm
 
 # Hyperparameters
-HIDDEN_DIM = 2048  # Number of neurons in hidden layers
-DROPOUT_RATE = 0.2  # Probability of dropping a neuron during training (regularization)
-GAMMA = 0.995  # Discount factor for future rewards (closer to 1 = more long-term focus)
+HIDDEN_DIM = 256  # Number of neurons in hidden layers
+GAMMA = 0.99  # Discount factor for future rewards (closer to 1 = more long-term focus)
 CLIP_EPSILON = 0.2  # PPO clipping parameter to limit policy update size
-LEARNING_RATE = 3e-3  # Step size for optimizer updates
-BATCH_SIZE = 256  # Number of samples processed in each training mini-batch
+LEARNING_RATE = 1e-3  # Step size for optimizer updates
+BATCH_SIZE = 64  # Number of samples processed in each training mini-batch
 PPO_EPOCHS = 10  # Number of times to reuse each collected trajectory for updates
-ENTROPY_COEF = 0.015  # Coefficient for entropy bonus (higher = more exploration)
+ENTROPY_COEF = 0.01  # Coefficient for entropy bonus (higher = more exploration)
 VALUE_COEF = 0.5  # Coefficient for value loss in the total loss function
 
 
@@ -41,10 +40,10 @@ class PolicyNetwork(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(DROPOUT_RATE),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim * 2),
             nn.ReLU(),
-            nn.Dropout(DROPOUT_RATE),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
             nn.Linear(hidden_dim, action_dim),
             nn.Softmax(dim=-1),
         )
@@ -63,10 +62,10 @@ class ValueNetwork(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(DROPOUT_RATE),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim * 2),
             nn.ReLU(),
-            nn.Dropout(DROPOUT_RATE),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
             nn.Linear(hidden_dim, 1),
         )
 

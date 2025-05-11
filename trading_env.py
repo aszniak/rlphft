@@ -9,10 +9,10 @@ class TradingAction(Enum):
     """Enumeration of discrete trading actions"""
 
     DO_NOTHING = 0
-    SELL_2_PERCENT = 1
-    SELL_1_PERCENT = 2
-    BUY_1_PERCENT = 3
-    BUY_2_PERCENT = 4
+    SELL_20_PERCENT = 1
+    SELL_10_PERCENT = 2
+    BUY_10_PERCENT = 3
+    BUY_20_PERCENT = 4
 
 
 class TradingEnv(gym.Env):
@@ -32,6 +32,7 @@ class TradingEnv(gym.Env):
         window_size: int = 30,  # How many past candles to include in state
         game_length: int = 1440,  # One day of minute candles
         random_start: bool = True,
+        full_data_evaluation: bool = False,
     ):
         """
         Initialize the trading environment.
@@ -44,6 +45,7 @@ class TradingEnv(gym.Env):
             window_size: Number of past candles included in the state
             game_length: Length of each game in candles
             random_start: If True, random starting point for each episode
+            full_data_evaluation: If True, use full data for evaluation
         """
         super().__init__()
 
@@ -55,6 +57,7 @@ class TradingEnv(gym.Env):
         self.window_size = window_size
         self.game_length = game_length
         self.random_start = random_start
+        self.full_data_evaluation = full_data_evaluation
 
         # Define state and action spaces
         # For each time step we get normalized features from the dataframe
@@ -83,6 +86,18 @@ class TradingEnv(gym.Env):
         self.total_portfolio_value = 0.0
         self.transaction_history = []
 
+        # For tracking rewards
+        self.portfolio_history = []
+        self.last_action = None
+        self.previous_portfolio_value = self.initial_balance
+
+        # Parameters for reward calculation
+        self.reward_volatility_window = 30  # Window for volatility calculation
+        self.sharpe_weight = 0.5
+        self.alpha_weight = 0.3
+        self.trend_weight = 0.1
+        self.trade_weight = 0.1
+
         # Initial state
         self.reset()
 
@@ -95,24 +110,28 @@ class TradingEnv(gym.Env):
         self.crypto_holdings = 0.0
         self.transaction_history = []
 
-        # Determine valid start and end indices
-        min_idx = self.window_size  # Need window_size previous candles
-        max_idx = (
-            len(self.data) - self.game_length - 1
-        )  # Need game_length candles ahead
+        # Reset reward tracking variables
+        self.portfolio_history = [self.initial_balance]
+        self.last_action = None
+        self.previous_portfolio_value = self.initial_balance
 
-        # Random or fixed starting point
-        if self.random_start:
-            self.start_index = (
-                self.np_random.integers(min_idx, max_idx)
-                if max_idx > min_idx
-                else min_idx
-            )
+        # For full data evaluation, start from the beginning
+        if self.full_data_evaluation:
+            self.current_step = self.window_size
+            self.start_index = 0
+            self.end_index = len(self.data) - 1
         else:
-            self.start_index = min_idx
-
-        self.current_step = self.start_index
-        self.end_index = self.start_index + self.game_length
+            # Training mode - randomly select a segment of data
+            if self.random_start:
+                max_start = len(self.data) - self.game_length - self.window_size
+                self.start_index = np.random.randint(0, max_start)
+                self.end_index = self.start_index + self.game_length
+                self.current_step = self.start_index + self.window_size
+            else:
+                # Fixed start for reproducible evaluation
+                self.start_index = self.window_size
+                self.end_index = self.start_index + self.game_length
+                self.current_step = self.start_index
 
         # Update portfolio value
         self._update_portfolio_value()
@@ -136,11 +155,13 @@ class TradingEnv(gym.Env):
             truncated: Whether the episode was truncated
             info: Additional information
         """
+        # Store current state for reward calculation
+        self.last_action = action
+        portfolio_value_before = self.total_portfolio_value
+        self.previous_portfolio_value = portfolio_value_before
+
         # Execute trading action
         self._take_action(action)
-
-        # Record portfolio value before moving to the next step
-        portfolio_value_before = self.total_portfolio_value
 
         # Move to next time step
         self.current_step += 1
@@ -148,10 +169,11 @@ class TradingEnv(gym.Env):
         # Update portfolio based on new prices
         self._update_portfolio_value()
 
-        # Calculate reward (change in portfolio value)
-        reward = (
-            self.total_portfolio_value - portfolio_value_before
-        ) / portfolio_value_before
+        # Add current portfolio value to history
+        self.portfolio_history.append(self.total_portfolio_value)
+
+        # Calculate sophisticated reward
+        reward = self._calculate_reward()
 
         # Get new state
         state = self._get_state()
@@ -177,27 +199,27 @@ class TradingEnv(gym.Env):
             # No action
             pass
 
-        elif action_type == TradingAction.BUY_1_PERCENT:
-            # Buy with 1% of current balance
-            buy_amount_usd = self.account_balance * 0.01
+        elif action_type == TradingAction.BUY_10_PERCENT:
+            # Buy with 10% of current balance
+            buy_amount_usd = self.account_balance * 0.10
             if buy_amount_usd > 0:
                 self._execute_buy(buy_amount_usd, current_price)
 
-        elif action_type == TradingAction.BUY_2_PERCENT:
-            # Buy with 2% of current balance
-            buy_amount_usd = self.account_balance * 0.02
+        elif action_type == TradingAction.BUY_20_PERCENT:
+            # Buy with 20% of current balance
+            buy_amount_usd = self.account_balance * 0.20
             if buy_amount_usd > 0:
                 self._execute_buy(buy_amount_usd, current_price)
 
-        elif action_type == TradingAction.SELL_1_PERCENT:
-            # Sell 1% of crypto holdings
-            sell_amount_crypto = self.crypto_holdings * 0.01
+        elif action_type == TradingAction.SELL_10_PERCENT:
+            # Sell 10% of crypto holdings
+            sell_amount_crypto = self.crypto_holdings * 0.10
             if sell_amount_crypto > 0:
                 self._execute_sell(sell_amount_crypto, current_price)
 
-        elif action_type == TradingAction.SELL_2_PERCENT:
-            # Sell 2% of crypto holdings
-            sell_amount_crypto = self.crypto_holdings * 0.02
+        elif action_type == TradingAction.SELL_20_PERCENT:
+            # Sell 20% of crypto holdings
+            sell_amount_crypto = self.crypto_holdings * 0.20
             if sell_amount_crypto > 0:
                 self._execute_sell(sell_amount_crypto, current_price)
 
@@ -326,6 +348,104 @@ class TradingEnv(gym.Env):
         print(f"  Crypto: {info['crypto_holdings']:.6f} (${info['crypto_value']:.2f})")
         print("---")
         return None
+
+    def _calculate_reward(self):
+        """Calculate a sophisticated reward using multiple components"""
+        # Basic return calculation
+        raw_return = (
+            self.total_portfolio_value - self.previous_portfolio_value
+        ) / self.previous_portfolio_value
+
+        # Calculate volatility component if we have enough history
+        if len(self.portfolio_history) >= self.reward_volatility_window:
+            # Calculate returns for the recent window
+            recent_values = self.portfolio_history[-self.reward_volatility_window :]
+            returns = np.array(
+                [
+                    (recent_values[i + 1] - recent_values[i]) / recent_values[i]
+                    for i in range(len(recent_values) - 1)
+                ]
+            )
+
+            volatility = np.std(returns) + 1e-6  # Avoid division by zero
+
+            # Higher reward for positive returns with low volatility
+            if raw_return > 0:
+                sharpe_component = raw_return / (volatility * 10)  # Scale factor
+            else:
+                sharpe_component = raw_return  # Keep negative returns as penalty
+        else:
+            sharpe_component = raw_return
+
+        # Market benchmark comparison (alpha)
+        current_price = self.data.iloc[self.current_step]["close"]
+        previous_price = self.data.iloc[self.current_step - 1]["close"]
+        market_return = (current_price - previous_price) / previous_price
+        alpha_component = raw_return - market_return
+
+        # Trend alignment reward
+        trend_component = self._calculate_trend_alignment(self.last_action)
+
+        # Trading frequency penalty
+        trade_component = (
+            -0.0005 if self.last_action != TradingAction.DO_NOTHING.value else 0
+        )
+
+        # Combine all reward components with weighting
+        total_reward = (
+            self.sharpe_weight * sharpe_component
+            + self.alpha_weight * alpha_component
+            + self.trend_weight * trend_component
+            + self.trade_weight * trade_component
+        )
+
+        return total_reward
+
+    def _calculate_trend_alignment(self, action):
+        """Calculate bonus for trading aligned with market trend"""
+        # Default - no bonus
+        alignment_bonus = 0
+
+        # Get technical indicators for trend detection
+        if all(indicator in self.data.columns for indicator in ["sma_5", "sma_20"]):
+            sma_short = self.data.iloc[self.current_step]["sma_5"]
+            sma_long = self.data.iloc[self.current_step]["sma_20"]
+
+            # Check if action aligns with trend
+            if sma_short > sma_long:  # Uptrend
+                if action in [
+                    TradingAction.BUY_10_PERCENT.value,
+                    TradingAction.BUY_20_PERCENT.value,
+                ]:
+                    alignment_bonus = 0.001  # Small bonus for buying in uptrend
+            elif sma_short < sma_long:  # Downtrend
+                if action in [
+                    TradingAction.SELL_10_PERCENT.value,
+                    TradingAction.SELL_20_PERCENT.value,
+                ]:
+                    alignment_bonus = 0.001  # Small bonus for selling in downtrend
+
+        # If no SMAs available, check simple price movement
+        else:
+            current_price = self.data.iloc[self.current_step]["close"]
+            prev_price = self.data.iloc[max(0, self.current_step - 5)][
+                "close"
+            ]  # 5-step trend
+
+            if current_price > prev_price:  # Uptrend
+                if action in [
+                    TradingAction.BUY_10_PERCENT.value,
+                    TradingAction.BUY_20_PERCENT.value,
+                ]:
+                    alignment_bonus = 0.001
+            elif current_price < prev_price:  # Downtrend
+                if action in [
+                    TradingAction.SELL_10_PERCENT.value,
+                    TradingAction.SELL_20_PERCENT.value,
+                ]:
+                    alignment_bonus = 0.001
+
+        return alignment_bonus
 
 
 class BuyAndHoldEnv(TradingEnv):

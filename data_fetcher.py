@@ -7,6 +7,7 @@ import numpy as np
 from typing import List, Dict, Union, Tuple
 from tqdm import tqdm
 from technical_indicators import add_technical_indicators, normalize_features
+from datetime import datetime, timedelta
 
 
 def fetch_and_cache_klines(
@@ -16,14 +17,20 @@ def fetch_and_cache_klines(
     lookback_days=7,
     force_refresh=False,
     cache_dir="data_cache",
+    cache_suffix=None,
 ):
     """Fetch klines data with caching to avoid repeated API calls"""
     # Create cache directory if it doesn't exist
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
 
-    # Define cache filename
-    cache_file = f"{cache_dir}/{symbol}_{interval}_{lookback_days}days.pkl"
+    # Define cache filename, with optional suffix for random periods
+    if cache_suffix:
+        cache_file = (
+            f"{cache_dir}/{symbol}_{interval}_{lookback_days}days{cache_suffix}.pkl"
+        )
+    else:
+        cache_file = f"{cache_dir}/{symbol}_{interval}_{lookback_days}days.pkl"
 
     # Check if cache file exists and we're not forcing a refresh
     if os.path.exists(cache_file) and not force_refresh:
@@ -187,24 +194,34 @@ def get_top_coins_by_volume(quote_asset="USDT", limit=5, cache_hours=24):
 
 
 def fetch_training_data(
-    symbols: Union[List[str], None] = None,
-    interval: str = "1m",
-    lookback_days: int = 30,
-    force_refresh: bool = False,
-) -> Dict[str, pd.DataFrame]:
+    symbols,
+    interval="1m",
+    lookback_days=30,
+    force_refresh=False,
+    start_date=None,
+    cache_suffix=None,
+):
     """
-    Fetch training data for multiple symbols
+    Fetch historical data for multiple crypto symbols with caching.
 
     Args:
-        symbols: List of symbol pairs (e.g., ['BTCUSDT', 'ETHUSDT']).
-                If None, fetches top 5 by volume.
-        interval: Candlestick interval ('1m', '5m', '15m', '1h', etc.)
-        lookback_days: How many days of historical data to fetch
+        symbols: List of symbols to fetch
+        interval: Candle interval (default: "1m")
+        lookback_days: Days of history to fetch
         force_refresh: Whether to force refresh cached data
-
-    Returns:
-        Dictionary mapping symbols to their respective DataFrames
+        start_date: Optional specific start date for data fetching
+        cache_suffix: Optional suffix to add to cache filenames (useful for random periods)
     """
+    # If start_date is provided, use it instead of calculating from lookback_days
+    if start_date:
+        end_date = start_date + timedelta(days=lookback_days)
+        start_timestamp = int(start_date.timestamp() * 1000)
+        end_timestamp = int(end_date.timestamp() * 1000)
+    else:
+        # Original calculation based on lookback_days
+        end_timestamp = int(time.time() * 1000)
+        start_timestamp = end_timestamp - (lookback_days * 24 * 60 * 60 * 1000)
+
     # If symbols not provided, get top coins by volume
     if symbols is None:
         symbols = get_top_coins_by_volume(limit=5)
@@ -220,6 +237,7 @@ def fetch_training_data(
             interval=interval,
             lookback_days=lookback_days,
             force_refresh=force_refresh,
+            cache_suffix=cache_suffix,
         )
 
         df = process_klines_data(klines)
