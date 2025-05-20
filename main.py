@@ -323,11 +323,12 @@ def main():
             print(f"\n{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
             print(f"{Fore.GREEN}📊 Comparative Performance Summary{Style.RESET_ALL}")
 
-            print(
-                f"{'Symbol':<10} {'Random %':<10} {'Buy & Hold %':<15} {'Trained Agent %':<15} {'vs Buy & Hold':<12}"
-            )
-            print(f"{'-'*70}")
+            # Create a more compact table header with colors
+            header = f"{Fore.YELLOW}{'Symbol':<10} {'Random':<10} {'Buy & Hold':<15} {'PPO Agent':<15} {'vs BuyHold':<12}{Style.RESET_ALL}"
+            print(header)
+            print(f"{'-'*65}")
 
+            # Print each symbol's performance as a row in the table
             for symbol, result in all_results.items():
                 random_return = result["random"]["return"]
                 buyhold_return = result["buyhold"]["return"]
@@ -339,8 +340,10 @@ def main():
                     Fore.GREEN if performance_vs_buyhold > 0 else Fore.RED
                 )
 
+                # Make returns right-aligned with sign (+ or -) and color-coded
                 print(
-                    f"{symbol:<10} {random_return:>8.2f}% {buyhold_return:>13.2f}% {trained_return:>13.2f}% {comparison_color}{performance_vs_buyhold:>+10.2f}%{Style.RESET_ALL}"
+                    f"{symbol:<10} {Fore.CYAN}{random_return:>+8.2f}%{Style.RESET_ALL} {Fore.CYAN}{buyhold_return:>+13.2f}%{Style.RESET_ALL} "
+                    + f"{Fore.CYAN}{trained_return:>+13.2f}%{Style.RESET_ALL} {comparison_color}{performance_vs_buyhold:>+10.2f}%{Style.RESET_ALL}"
                 )
 
     # Test with Binance testnet

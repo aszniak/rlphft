@@ -338,33 +338,40 @@ def evaluate_agents(
         init_wandb_for_evaluation(config, symbol, episodes)
 
     # Random agent
-    print(f"\n{Fore.YELLOW}🎲 Random Agent:{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}🎲 Random Agent:{Style.RESET_ALL}", end="")
     env.reset(seed=random_seed)
     random_perf = evaluate_agent(random_agent, env, episodes=episodes)
     random_return = (random_perf[-1] - random_perf[0]) / random_perf[0] * 100
 
     # Buy and hold
-    print(f"\n{Fore.YELLOW}📈 Buy and Hold Strategy:{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}📈 Buy and Hold Strategy:{Style.RESET_ALL}", end="")
     buyhold_env.reset(seed=random_seed)
     buyhold_perf = evaluate_agent(random_agent, buyhold_env, episodes=episodes)
     buyhold_return = (buyhold_perf[-1] - buyhold_perf[0]) / buyhold_perf[0] * 100
 
     # Trained agent
-    print(f"\n{Fore.YELLOW}🤖 Trained PPO Agent:{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}🤖 Trained PPO Agent:{Style.RESET_ALL}", end="")
     env.reset(seed=random_seed)
     ppo_perf = evaluate_agent(trained_agent, env, episodes=episodes)
     ppo_return = (ppo_perf[-1] - ppo_perf[0]) / ppo_perf[0] * 100
 
-    # Print summary
+    # Print summary in a table format
     print(f"\n{Fore.GREEN}📊 Performance Summary{Style.RESET_ALL}")
+    print(f"{'Strategy':<15} {'Return (%)':<12}")
+    print(f"{'-'*30}")
     print(
-        f"{Fore.YELLOW}🎲 Random Agent:{Style.RESET_ALL} Final return = {Fore.CYAN}{random_return:.2f}%{Style.RESET_ALL}"
+        f"{'🎲 Random Agent':<15} {Fore.CYAN}{random_return:>+10.2f}%{Style.RESET_ALL}"
     )
     print(
-        f"{Fore.YELLOW}📈 Buy and Hold:{Style.RESET_ALL} Final return = {Fore.CYAN}{buyhold_return:.2f}%{Style.RESET_ALL}"
+        f"{'📈 Buy and Hold':<15} {Fore.CYAN}{buyhold_return:>+10.2f}%{Style.RESET_ALL}"
     )
+    print(f"{'🤖 Trained Agent':<15} {Fore.CYAN}{ppo_return:>+10.2f}%{Style.RESET_ALL}")
+
+    # Show performance vs benchmark
+    performance_vs_buyhold = ppo_return - buyhold_return
+    comparison_color = Fore.GREEN if performance_vs_buyhold > 0 else Fore.RED
     print(
-        f"{Fore.YELLOW}🤖 Trained Agent:{Style.RESET_ALL} Final return = {Fore.CYAN}{ppo_return:.2f}%{Style.RESET_ALL}"
+        f"{'vs Buy & Hold':<15} {comparison_color}{performance_vs_buyhold:>+10.2f}%{Style.RESET_ALL}"
     )
 
     # Log evaluation metrics using our visualization module
@@ -403,6 +410,10 @@ def evaluate_agent(agent, env, episodes=1):
         balance_history = [info["account_balance"]]
         holdings_history = [info["crypto_holdings"]]
 
+        # Store initial investment value for buyhold strategy
+        is_buyhold = isinstance(env, BuyAndHoldEnv)
+        initial_investment = info["total_portfolio_value"]
+
         # Create progress bar for long evaluation
         total_steps = env.end_index - env.current_step
         progress_bar = tqdm(
@@ -432,31 +443,60 @@ def evaluate_agent(agent, env, episodes=1):
 
         progress_bar.close()
 
-        # Print action distribution
+        # Print final value and stats in a single line with carriage return
+        print(
+            f"\rFinal portfolio: ${portfolio_values[-1]:.2f} after {step_count} steps"
+        )
+
+        # Print action distribution as a table
         total_actions = sum(action_counts)
         action_names = ["DO_NOTHING", "SELL_20%", "SELL_10%", "BUY_10%", "BUY_20%"]
+
         print("\nAction distribution:")
+        print(f"{'Action':<12} {'Count':<8} {'Percentage':<10}")
+        print(f"{'-'*32}")
         for i, count in enumerate(action_counts):
             percentage = (count / total_actions) * 100 if total_actions > 0 else 0
-            print(f"  {action_names[i]}: {count} ({percentage:.1f}%)")
+            print(f"{action_names[i]:<12} {count:>6} {percentage:>9.1f}%")
 
-        # Calculate trading statistics
-        avg_balance = (
-            sum(balance_history) / len(balance_history) if balance_history else 0
-        )
-        final_balance = balance_history[-1] if balance_history else 0
-        max_holdings = max(holdings_history) if holdings_history else 0
-        final_holdings = holdings_history[-1] if holdings_history else 0
+        # Calculate trading statistics - handle BuyAndHold strategy differently
+        if is_buyhold:
+            # For buy and hold, we need to calculate differently since all cash was converted to crypto
+            avg_balance = 0.0  # Cash balance is always 0 in buy and hold
+            final_balance = info["account_balance"]
+            max_holdings = max(holdings_history) if holdings_history else 0
+            final_holdings = holdings_history[-1] if holdings_history else 0
 
-        print(f"Trading statistics:")
-        print(f"  Initial balance: ${balance_history[0]:.2f}")
-        print(f"  Final balance: ${final_balance:.2f}")
-        print(f"  Final holdings: {final_holdings:.6f}")
-        print(f"  Max holdings: {max_holdings:.6f}")
+            # Print trading statistics as a table with different interpretation for BuyHold
+            print("\nTrading statistics:")
+            print(f"{'Metric':<16} {'Value':<15}")
+            print(f"{'-'*32}")
+            print(f"{'Initial investment':<16} ${initial_investment:.2f}")
+            print(f"{'Final value':<16} ${portfolio_values[-1]:.2f}")
+            print(f"{'Cash balance':<16} ${final_balance:.2f}")
+            print(f"{'Crypto holdings':<16} {final_holdings:.6f}")
+            print(
+                f"{'Return':<16} {((portfolio_values[-1]/initial_investment)-1)*100:+.2f}%"
+            )
+        else:
+            # Regular trading calculation
+            avg_balance = (
+                sum(balance_history) / len(balance_history) if balance_history else 0
+            )
+            final_balance = balance_history[-1] if balance_history else 0
+            max_holdings = max(holdings_history) if holdings_history else 0
+            final_holdings = holdings_history[-1] if holdings_history else 0
 
-        print(
-            f"Full dataset evaluation: Final portfolio value = ${portfolio_values[-1]:.2f} after {step_count} steps"
-        )
+            # Print trading statistics as a table
+            print("\nTrading statistics:")
+            print(f"{'Metric':<16} {'Value':<15}")
+            print(f"{'-'*32}")
+            print(f"{'Initial balance':<16} ${balance_history[0]:.2f}")
+            print(f"{'Final balance':<16} ${final_balance:.2f}")
+            print(f"{'Average balance':<16} ${avg_balance:.2f}")
+            print(f"{'Final holdings':<16} {final_holdings:.6f}")
+            print(f"{'Max holdings':<16} {max_holdings:.6f}")
+
         return portfolio_values
     else:
         # Original code for multiple episode evaluation
@@ -480,9 +520,14 @@ def evaluate_agent(agent, env, episodes=1):
             all_portfolio_values.append(portfolio_values)
             all_timestamps.append(timestamps)
 
+            # Use carriage return to update on same line
             print(
-                f"Episode {ep+1}: Final portfolio value = ${portfolio_values[-1]:.2f}"
+                f"\rEpisode {ep+1}/{episodes}: Final value = ${portfolio_values[-1]:.2f}",
+                end="",
             )
+
+        # End with a newline
+        print()
 
         # Calculate average portfolio value across episodes
         max_length = max(len(values) for values in all_portfolio_values)

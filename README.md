@@ -4,7 +4,7 @@ This project applies reinforcement learning techniques to cryptocurrency trading
 
 ## Prerequisites
 
-### Cryptocurrency Trading Components
+### Trading Components
 
 - Python 3.10 or higher
 - Requests, NumPy, Pandas, Matplotlib
@@ -12,13 +12,6 @@ This project applies reinforcement learning techniques to cryptocurrency trading
 - Gymnasium for RL environments
 - SSH key for Binance API authentication (optional)
 - Weights & Biases for experiment tracking (optional)
-
-### CartPole RL Components
-
-- PyTorch 2.0+
-- Gymnasium 0.29+
-- OpenCV Python
-- tqdm for progress tracking
 
 You can install all dependencies with:
 
@@ -36,73 +29,68 @@ To run the cryptocurrency trading system:
 
 ```bash
 # Run with default settings (will load saved model if available)
-python main.py --symbol BTCUSDT
+python main.py
+
+# Train the model with multiple symbols
+python main.py --symbols BTCUSDT ETHUSDT SOLUSDT --train
 
 # Force training a new model even if one exists
-python main.py --symbol BTCUSDT --train
+python main.py --train
+
+# Use fast training mode (fewer epochs for quick iterations)
+python main.py --train --fast_train
+
+# Use full training mode (more epochs for complete training)
+python main.py --train --full_train
 
 # Specify the number of days of historical data to use
-python main.py --symbol ETHUSDT --lookback_days 60
+python main.py --lookback_days 60
 
-# Train with specific parameters
-python main.py --symbol BTCUSDT --train --epochs 200 --initial_balance 20000
+# Force refresh of data cache
+python main.py --force_refresh
 
-# Evaluate with different episodes
-python main.py --symbol BTCUSDT --evaluate --episodes 10
+# Evaluate the model (loads existing model if available)
+python main.py --evaluate
+
+# Evaluate on a specific symbol
+python main.py --eval_symbol ETHUSDT
+
+# Evaluate on a random symbol
+python main.py --eval_random
+
+# Evaluate on all available symbols
+python main.py --eval_all
+
+# Set number of evaluation episodes
+python main.py --episodes 10
+
+# Specify initial crypto allocation for evaluation (0.0 to 1.0)
+python main.py --initial_allocation 0.5
+
+# Disable hardware optimization
+python main.py --no_optimize
+
+# Disable mixed precision training
+python main.py --no_mixed_precision
 
 # Enable Weights & Biases tracking
-python main.py --symbol BTCUSDT --wandb
+python main.py --wandb
+
+# Test with Binance testnet (requires API setup)
+python main.py --testnet
 ```
 
 ### Features of the Trading Implementation
 
 - **Trading Environment**: A Gymnasium-compatible environment simulating cryptocurrency trading
 - **PPO Agent**: Implementation of the PPO algorithm for trading optimization
-- **Multi-Asset Support**: Support for trading multiple cryptocurrencies
+- **Multi-Asset Support**: Support for training and evaluating on multiple cryptocurrencies
 - **Configurable Parameters**: Comprehensive configuration system through `config.py`
 - **Technical Indicators**: Automated calculation of technical indicators as features
 - **Evaluation Framework**: Comparison with baseline strategies (Random, Buy & Hold)
+- **Hardware Optimization**: Automatic GPU utilization and mixed precision training
+- **Flexible Evaluation**: Options to evaluate on specific, random, or all available symbols
 - **W&B Integration**: Optional tracking of training/evaluation metrics with Weights & Biases
-
-## CartPole Implementation
-
-Before applying RL to the more complex domain of cryptocurrency trading, we've implemented a Proximal Policy Optimization (PPO) agent to solve the classic CartPole control problem. This serves as a testbed for our RL algorithms and visualization techniques.
-
-### Running the CartPole Environment
-
-To run the CartPole environment:
-
-```bash
-# Run with default settings (will load saved model if available)
-python cartpole.py
-
-# Force training a new model even if one exists
-python cartpole.py --train
-
-# Specify a custom path for saving/loading the model
-python cartpole.py --model_path my_model
-
-# Set the number of training epochs
-python cartpole.py --train --epochs 100
-
-# Set the number of evaluation episodes
-python cartpole.py --eval_episodes 30
-```
-
-### Features of the CartPole Implementation
-
-- **PPO Implementation**: Efficient implementation of the PPO algorithm
-- **Model Saving/Loading**: Save trained models and load them later to avoid retraining
-- **Visualization**: Three-panel visualization showing:
-  - Random agent performance
-  - Training progress of the PPO agent
-  - Trained agent performance
-- **Progress Tracking**: Uses tqdm for clear progress visualization during training
-
-### Files for CartPole
-
-- `cartpole.py` - Main file for running the CartPole environment with visualization
-- `agent.py` - Implementation of the PPO agent and policy/value networks
 
 ## Python Setup
 
@@ -133,7 +121,6 @@ This will generate a PNG file showing the selected cryptocurrency with all techn
 - **Main Scripts:**
 
   - `main.py` - Main script for cryptocurrency trading with RL
-  - `cartpole.py` - Main file for running the CartPole environment with visualization
 
 - **Agents and Models:**
 

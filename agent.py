@@ -7,6 +7,7 @@ from tqdm import tqdm
 from gymnasium.vector import AsyncVectorEnv
 import copy
 import time
+from colorama import Fore, Style
 
 
 # Add a simple profiler class to track time during training
@@ -60,20 +61,64 @@ class SimpleProfiler:
             print("No profiling data collected")
             return
 
-        print("\n===== TRAINING PERFORMANCE PROFILE =====")
-        print(
-            f"{'Section':<25} {'Total (s)':<10} {'Calls':<8} {'Avg (ms)':<10} {'%':<8}"
-        )
-        print("-" * 65)
+        print(f"\n{Fore.CYAN}===== TRAINING PERFORMANCE PROFILE ====={Style.RESET_ALL}")
 
-        # Sort by total time spent
-        for name, data in sorted(
-            stats.items(), key=lambda x: x[1]["total"], reverse=True
-        ):
+        # Format header as a single table line with colors
+        header = f"{Fore.YELLOW}{'Section':<25} {'Total (s)':<10} {'Calls':<8} {'Avg (ms)':<10} {'%':<8}{Style.RESET_ALL}"
+        print(header)
+        print(f"{'-'*65}")
+
+        # Sort by total time spent and format as a compact table
+        sorted_stats = sorted(stats.items(), key=lambda x: x[1]["total"], reverse=True)
+
+        # Track top 5 most time-consuming sections for summary
+        top_sections = []
+
+        # Limit to showing the most important sections (80% of time or top 10)
+        shown_percentage = 0
+        max_sections = min(len(sorted_stats), 10)
+
+        for i, (name, data) in enumerate(sorted_stats):
+            # Add color coding based on percentage
+            if data["percentage"] > 25:
+                color = Fore.RED  # Critical bottleneck
+            elif data["percentage"] > 10:
+                color = Fore.YELLOW  # Significant time
+            else:
+                color = Fore.GREEN  # Not a bottleneck
+
             print(
-                f"{name:<25} {data['total']:<10.2f} {data['calls']:<8} {data['avg']*1000:<10.2f} {data['percentage']:<8.2f}"
+                f"{name:<25} {data['total']:<10.2f} {data['calls']:<8} {data['avg']*1000:<10.2f} {color}{data['percentage']:>7.2f}%{Style.RESET_ALL}"
             )
-        print("========================================\n")
+
+            # Track top sections
+            if i < 5:
+                top_sections.append((name, data["percentage"]))
+
+            # Break after showing sections that account for 80% of time or top 10
+            shown_percentage += data["percentage"]
+            if shown_percentage > 80 and i >= 5:
+                remaining = len(sorted_stats) - i - 1
+                if remaining > 0:
+                    print(
+                        f"... and {remaining} more sections (accounting for {100-shown_percentage:.1f}% of time)"
+                    )
+                break
+
+        print(f"{'-'*65}")
+
+        # Add a summary of the main bottlenecks
+        if top_sections:
+            print(f"\n{Fore.CYAN}Top bottlenecks:{Style.RESET_ALL}")
+            for name, percentage in top_sections:
+                color = (
+                    Fore.RED
+                    if percentage > 25
+                    else (Fore.YELLOW if percentage > 10 else Fore.GREEN)
+                )
+                print(f"• {name}: {color}{percentage:.1f}%{Style.RESET_ALL}")
+
+        print(f"{Fore.CYAN}======================================{Style.RESET_ALL}\n")
 
 
 class RandomAgent:
@@ -1268,33 +1313,61 @@ class PPOAgent:
 
     def print_training_summary(self, eval_rewards=None, overall_stats=None):
         """Print a simple summary of the training performance"""
-        print("\nTraining Summary:")
+        print(f"\n{Fore.CYAN}Training Summary:{Style.RESET_ALL}")
 
-        # Show overall statistics if provided
+        # Create tables for all stats
+
+        # Overall statistics table
         if overall_stats is not None:
-            print(f"Total Episodes: {overall_stats['total_episodes']}")
-            print(f"Overall Average Episode Reward: {overall_stats['avg_reward']:.2f}")
-            print(
-                f"Perfect Episodes: {overall_stats['perfect_episodes']}/{overall_stats['total_episodes']} ({overall_stats['perfect_percentage']:.1f}%)"
+            print(f"{Fore.YELLOW}{'Statistic':<25} {'Value':<15}{Style.RESET_ALL}")
+            print("-" * 42)
+            print(f"{'Total Episodes':<25} {overall_stats['total_episodes']:<15}")
+            print(f"{'Avg Episode Reward':<25} {overall_stats['avg_reward']:.2f}")
+
+            # Format perfect episodes with color based on percentage
+            perf_pct = overall_stats["perfect_percentage"]
+            perf_color = (
+                Fore.GREEN
+                if perf_pct > 50
+                else (Fore.YELLOW if perf_pct > 20 else Fore.RED)
             )
+            print(
+                f"{'Perfect Episodes':<25} {overall_stats['perfect_episodes']}/{overall_stats['total_episodes']} ({perf_color}{perf_pct:.1f}%{Style.RESET_ALL})"
+            )
+
             if "incomplete_episodes" in overall_stats:
                 print(
-                    f"Incomplete Episodes (cut off at epoch boundaries): {overall_stats['incomplete_episodes']}"
+                    f"{'Incomplete Episodes':<25} {overall_stats['incomplete_episodes']}"
                 )
 
-        # Only show evaluation rewards if provided
+        # Training metrics table
         if eval_rewards is not None and len(eval_rewards) > 0:
-            print(f"Number of Training Epochs: {len(eval_rewards)}")
-            print(f"Final Average Reward: {eval_rewards[-1]:.2f}")
-            print(f"Peak Average Reward: {max(eval_rewards):.2f}")
+            # Add spacing
+            if overall_stats is not None:
+                print()
 
-            # Calculate improvement
+            print(
+                f"{Fore.YELLOW}{'Training Metric':<25} {'Value':<15}{Style.RESET_ALL}"
+            )
+            print("-" * 42)
+            print(f"{'Training Epochs':<25} {len(eval_rewards)}")
+            print(f"{'Final Reward':<25} {eval_rewards[-1]:.2f}")
+            print(f"{'Peak Reward':<25} {max(eval_rewards):.2f}")
+
+            # Calculate improvement with color coding
             if len(eval_rewards) > 1:
                 first_reward = eval_rewards[0]
                 last_reward = eval_rewards[-1]
-                improvement = ((last_reward - first_reward) / first_reward) * 100
-                print(f"Improvement: {improvement:.2f}%")
-        else:
+                improvement = (
+                    (last_reward - first_reward) / max(abs(first_reward), 0.0001)
+                ) * 100
+
+                # Color code improvement
+                imp_color = Fore.GREEN if improvement > 0 else Fore.RED
+                print(
+                    f"{'Improvement':<25} {imp_color}{improvement:+.2f}%{Style.RESET_ALL}"
+                )
+        elif overall_stats is None:
             print("No evaluation metrics available.")
 
     # Add other methods as needed
