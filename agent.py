@@ -74,10 +74,10 @@ class PPOAgent:
         self,
         state_dim,
         action_dim,
-        hidden_dim=256,
+        hidden_dim=512,
         gamma=0.99,
         clip_epsilon=0.2,
-        learning_rate=1e-3,
+        learning_rate=1e-4,
         device=None,
         config=None,
     ):
@@ -114,6 +114,12 @@ class PPOAgent:
         self.all_epoch_rewards = []
         self.all_episode_rewards = []
 
+        # Enable mixed precision for faster GPU processing if available
+        self.use_mixed_precision = torch.cuda.is_available() and hasattr(torch, "amp")
+        if self.use_mixed_precision:
+            self.scaler = torch.amp.GradScaler()
+            print("Using mixed precision training with CUDA")
+
     def select_action(self, state):
         # Set to evaluation mode for inference
         self.policy.eval()
@@ -137,6 +143,160 @@ class PPOAgent:
             log_probs = dist.log_prob(actions)
         return actions.cpu().numpy(), log_probs.cpu().numpy()
 
+    def collect_trajectories_cuda(
+        self,
+        env_fn,
+        n_envs=8,
+        steps_per_env=2048,
+        disable_progress=False,
+    ):
+        """
+        CUDA-optimized trajectory collection that processes batched environment data more efficiently
+
+        Args:
+            env_fn: Function that creates a single environment instance
+            n_envs: Number of parallel environments
+            steps_per_env: Number of steps to collect per environment
+            disable_progress: Whether to disable the progress bar
+
+        Returns:
+            Tuple of collected trajectory data (converted to NumPy arrays)
+        """
+        # Similar to collect_trajectories_parallel but with GPU optimizations
+        # Create vector of environments
+        env_fns = [env_fn for _ in range(n_envs)]
+        envs = AsyncVectorEnv(env_fns)
+
+        # Initialize storage directly as CUDA tensors for more efficient processing
+        total_steps = n_envs * steps_per_env
+        states = torch.zeros(
+            (total_steps, self.state_dim), dtype=torch.float32, device=self.device
+        )
+        actions = torch.zeros(total_steps, dtype=torch.int64, device=self.device)
+        rewards = torch.zeros(total_steps, dtype=torch.float32, device=self.device)
+        dones = torch.zeros(total_steps, dtype=torch.bool, device=self.device)
+        next_states = torch.zeros(
+            (total_steps, self.state_dim), dtype=torch.float32, device=self.device
+        )
+        log_probs = torch.zeros(total_steps, dtype=torch.float32, device=self.device)
+
+        # CPU versions for environment interaction
+        cpu_episode_rewards = np.zeros(n_envs)
+        cpu_episode_lengths = np.zeros(n_envs, dtype=int)
+        episode_lengths = []
+
+        # Reset all environments
+        obs, _ = envs.reset()
+
+        # Only show progress bar if not disabled
+        if disable_progress:
+            pbar = None
+            iterator = range(steps_per_env)
+        else:
+            pbar = tqdm(total=steps_per_env, desc="Collecting experience")
+            iterator = pbar
+
+        for t in iterator:
+            # Get actions for all environments
+            # Convert observations to CUDA tensor
+            obs_tensor = torch.FloatTensor(obs).to(self.device)
+
+            # Get actions (keeping everything on GPU)
+            with torch.no_grad():
+                probs = self.policy(obs_tensor)
+                dist = torch.distributions.Categorical(probs)
+                action_tensor = dist.sample()
+                log_prob_tensor = dist.log_prob(action_tensor)
+
+            # Convert back to CPU for environment stepping
+            action_values = action_tensor.cpu().numpy()
+
+            # Step environments
+            next_obs, reward, term, trunc, infos = envs.step(action_values)
+            done = np.logical_or(term, trunc)
+
+            # Store data (directly in CUDA tensors)
+            start_idx = t * n_envs
+            end_idx = start_idx + n_envs
+
+            # Use pinned memory for faster CPU->GPU transfers
+            states[start_idx:end_idx] = obs_tensor
+            actions[start_idx:end_idx] = action_tensor
+            rewards[start_idx:end_idx] = torch.FloatTensor(reward).to(self.device)
+            dones[start_idx:end_idx] = torch.BoolTensor(done).to(self.device)
+            next_states[start_idx:end_idx] = torch.FloatTensor(next_obs).to(self.device)
+            log_probs[start_idx:end_idx] = log_prob_tensor
+
+            # Update episode tracking (keep on CPU for efficiency)
+            cpu_episode_rewards += reward
+            cpu_episode_lengths += 1
+
+            # Handle completed episodes
+            for i in range(n_envs):
+                if done[i]:
+                    self.all_episode_rewards.append(float(cpu_episode_rewards[i]))
+                    episode_lengths.append(int(cpu_episode_lengths[i]))
+                    cpu_episode_rewards[i] = 0
+                    cpu_episode_lengths[i] = 0
+
+            # Update state
+            obs = next_obs
+
+            # Update progress bar if it exists
+            if pbar:
+                pbar.update(1)
+
+            # Store info from last step
+            if t == steps_per_env - 1:
+                # Store the last info safely
+                if isinstance(infos, dict):
+                    # Handle dictionary type infos (common for vectorized envs)
+                    self.last_info = {}
+                    for key, values in infos.items():
+                        if isinstance(values, np.ndarray) and values.size > 0:
+                            # Take the first item if it's an array
+                            self.last_info[key] = (
+                                float(values[0])
+                                if np.issubdtype(values.dtype, np.number)
+                                else values[0]
+                            )
+                        else:
+                            self.last_info[key] = (
+                                float(values)
+                                if isinstance(values, np.number)
+                                else values
+                            )
+                elif isinstance(infos, list) and len(infos) > 0:
+                    # Handle list type infos
+                    self.last_info = infos[0]
+                else:
+                    # Fallback
+                    self.last_info = infos
+
+        # Close progress bar if it exists
+        if pbar:
+            pbar.close()
+
+        envs.close()
+
+        # Set last_episode_rewards for backward compatibility
+        self.last_episode_rewards = (
+            [float(r) for r in self.all_episode_rewards[-n_envs:]]
+            if self.all_episode_rewards
+            else []
+        )
+
+        # Convert CUDA tensors to NumPy arrays before returning
+        return (
+            states.cpu().numpy(),
+            actions.cpu().numpy(),
+            rewards.cpu().numpy(),
+            dones.cpu().numpy(),
+            next_states.cpu().numpy(),
+            log_probs.cpu().numpy(),
+            episode_lengths,
+        )
+
     def collect_trajectories_parallel(
         self,
         env_fn,
@@ -156,7 +316,25 @@ class PPOAgent:
         Returns:
             Tuple of collected trajectory data
         """
-        # Create vector of environments
+        # Use the single environment version if n_envs is 1 or GPU isn't available
+        if n_envs == 1 or not torch.cuda.is_available():
+            # Create a single environment
+            env = env_fn()
+
+            # Collect data using the single-environment method
+            return self.collect_trajectories(
+                env,
+                num_steps=steps_per_env,
+                display=False,
+            )
+
+        # Call optimized CUDA version if using GPU and multiple environments
+        if torch.cuda.is_available() and n_envs > 1:
+            return self.collect_trajectories_cuda(
+                env_fn, n_envs, steps_per_env, disable_progress
+            )
+
+        # Original CPU implementation for multiple environments
         env_fns = [env_fn for _ in range(n_envs)]
         envs = AsyncVectorEnv(env_fns)
 
@@ -339,12 +517,13 @@ class PPOAgent:
 
         # Process data in larger batches for GPU efficiency
         # Convert to tensors and move to device only once
-        states = torch.FloatTensor(np.array(states)).to(self.device)
-        actions = torch.LongTensor(np.array(actions)).to(self.device)
-        old_log_probs = torch.FloatTensor(np.array(old_log_probs)).to(self.device)
-        rewards = torch.FloatTensor(np.array(rewards)).to(self.device)
-        dones = torch.BoolTensor(np.array(dones)).to(self.device)
-        next_states = torch.FloatTensor(np.array(next_states)).to(self.device)
+        if not isinstance(states, torch.Tensor):
+            states = torch.FloatTensor(np.array(states)).to(self.device)
+            actions = torch.LongTensor(np.array(actions)).to(self.device)
+            old_log_probs = torch.FloatTensor(np.array(old_log_probs)).to(self.device)
+            rewards = torch.FloatTensor(np.array(rewards)).to(self.device)
+            dones = torch.BoolTensor(np.array(dones)).to(self.device)
+            next_states = torch.FloatTensor(np.array(next_states)).to(self.device)
 
         # Compute returns and advantages with tensors
         with torch.no_grad():
@@ -375,49 +554,106 @@ class PPOAgent:
                 # Forward pass for both networks in a single batch
                 mini_states = states[idx]
                 mini_actions = actions[idx]
-
-                # Get new log probs and values
-                current_probs = self.policy(mini_states)
-                dist = torch.distributions.Categorical(current_probs)
-                current_log_probs = dist.log_prob(mini_actions)
-                entropy = dist.entropy().mean()
-
-                current_values = self.value(mini_states).squeeze(-1)
-
-                # Compute ratio for PPO
-                ratio = torch.exp(current_log_probs - old_log_probs[idx])
-
-                # Compute PPO losses
                 mini_advantages = advantages[idx]
-                surrogate1 = ratio * mini_advantages
-                surrogate2 = (
-                    torch.clamp(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon)
-                    * mini_advantages
-                )
+                mini_returns = returns[idx]
+                mini_old_log_probs = old_log_probs[idx]
 
-                # Policy loss (negative because we're doing gradient ascent)
-                policy_loss = -torch.min(surrogate1, surrogate2).mean()
+                # Use mixed precision training if available
+                if self.use_mixed_precision:
+                    with torch.amp.autocast(
+                        device_type="cuda"
+                    ):  # Updated to recommended usage
+                        # Get new log probs and values with mixed precision
+                        current_probs = self.policy(mini_states)
+                        dist = torch.distributions.Categorical(current_probs)
+                        current_log_probs = dist.log_prob(mini_actions)
+                        entropy = dist.entropy().mean()
+                        current_values = self.value(mini_states).squeeze(-1)
 
-                # Value loss
-                value_loss = ((current_values - returns[idx]) ** 2).mean()
+                        # Compute ratio for PPO
+                        ratio = torch.exp(current_log_probs - mini_old_log_probs)
 
-                # Entropy bonus (encourages exploration)
-                entropy_loss = -entropy_coef * entropy
+                        # Compute PPO losses
+                        surrogate1 = ratio * mini_advantages
+                        surrogate2 = (
+                            torch.clamp(
+                                ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon
+                            )
+                            * mini_advantages
+                        )
 
-                # Total loss
-                total_loss = policy_loss + value_coef * value_loss + entropy_loss
+                        # Policy loss (negative because we're doing gradient ascent)
+                        policy_loss = -torch.min(surrogate1, surrogate2).mean()
 
-                # Update networks
-                self.policy_optimizer.zero_grad()
-                self.value_optimizer.zero_grad()
-                total_loss.backward()
+                        # Value loss
+                        value_loss = ((current_values - mini_returns) ** 2).mean()
 
-                # Clip gradients for stability (optional)
-                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
-                torch.nn.utils.clip_grad_norm_(self.value.parameters(), 0.5)
+                        # Entropy bonus (encourages exploration)
+                        entropy_loss = -entropy_coef * entropy
 
-                self.policy_optimizer.step()
-                self.value_optimizer.step()
+                        # Total loss
+                        total_loss = (
+                            policy_loss + value_coef * value_loss + entropy_loss
+                        )
+
+                    # Update with mixed precision
+                    self.policy_optimizer.zero_grad()
+                    self.value_optimizer.zero_grad()
+                    self.scaler.scale(total_loss).backward()
+
+                    # Clip gradients for stability
+                    self.scaler.unscale_(self.policy_optimizer)
+                    self.scaler.unscale_(self.value_optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
+                    torch.nn.utils.clip_grad_norm_(self.value.parameters(), 0.5)
+
+                    # Update with scaled gradients
+                    self.scaler.step(self.policy_optimizer)
+                    self.scaler.step(self.value_optimizer)
+                    self.scaler.update()
+                else:
+                    # Standard training without mixed precision
+                    # Get new log probs and values
+                    current_probs = self.policy(mini_states)
+                    dist = torch.distributions.Categorical(current_probs)
+                    current_log_probs = dist.log_prob(mini_actions)
+                    entropy = dist.entropy().mean()
+
+                    current_values = self.value(mini_states).squeeze(-1)
+
+                    # Compute ratio for PPO
+                    ratio = torch.exp(current_log_probs - mini_old_log_probs)
+
+                    # Compute PPO losses
+                    surrogate1 = ratio * mini_advantages
+                    surrogate2 = (
+                        torch.clamp(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon)
+                        * mini_advantages
+                    )
+
+                    # Policy loss (negative because we're doing gradient ascent)
+                    policy_loss = -torch.min(surrogate1, surrogate2).mean()
+
+                    # Value loss
+                    value_loss = ((current_values - mini_returns) ** 2).mean()
+
+                    # Entropy bonus (encourages exploration)
+                    entropy_loss = -entropy_coef * entropy
+
+                    # Total loss
+                    total_loss = policy_loss + value_coef * value_loss + entropy_loss
+
+                    # Update networks
+                    self.policy_optimizer.zero_grad()
+                    self.value_optimizer.zero_grad()
+                    total_loss.backward()
+
+                    # Clip gradients for stability
+                    torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
+                    torch.nn.utils.clip_grad_norm_(self.value.parameters(), 0.5)
+
+                    self.policy_optimizer.step()
+                    self.value_optimizer.step()
 
     def collect_trajectories(
         self, env, num_steps=2048, display=False, window_size=(1024, 768)

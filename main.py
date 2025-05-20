@@ -10,6 +10,7 @@ import wandb
 import time
 import colorama
 from colorama import Fore, Style
+import gym
 
 from config import Config, default_config
 from data_fetcher import (
@@ -136,7 +137,7 @@ def fetch_data(
 
 def train_agent(
     data_dict,
-    symbol,
+    symbols,  # Changed from single symbol to list of symbols
     config=default_config,
     num_epochs=None,
     steps_per_epoch=None,
@@ -146,10 +147,11 @@ def train_agent(
 ):
     """
     Train a PPO agent for trading with optional W&B tracking.
+    Now supports training on multiple assets simultaneously.
 
     Args:
         data_dict: Dictionary with processed price data
-        symbol: Symbol to trade
+        symbols: List of symbols to trade (e.g., ['BTCUSDT', 'ETHUSDT'])
         config: Configuration object
         num_epochs: Number of training epochs (overrides config)
         steps_per_epoch: Steps per epoch (overrides config)
@@ -170,14 +172,22 @@ def train_agent(
     )
     use_wandb = use_wandb if use_wandb is not None else config.use_wandb
 
+    # Ensure symbols is a list
+    if isinstance(symbols, str):
+        symbols = [symbols]
+
+    # Create a descriptive name for the model that includes all symbols
+    symbols_string = "_".join([s.replace("USDT", "") for s in symbols])
+    model_name = f"ppo-multi-{symbols_string}"
+
     # Initialize W&B if requested
     if use_wandb:
         wandb.init(
             project=config.wandb_project,
             entity=config.wandb_team,
-            name=f"ppo-{symbol}-{time.strftime('%Y%m%d-%H%M%S')}",
+            name=f"{model_name}-{time.strftime('%Y%m%d-%H%M%S')}",
             config={
-                "symbol": symbol,
+                "symbols": symbols,
                 "epochs": num_epochs,
                 "steps_per_epoch": steps_per_epoch,
                 "initial_balance": initial_balance,
@@ -189,14 +199,17 @@ def train_agent(
             },
         )
 
-    # Check if we have enough data
-    if len(data_dict[symbol]) < config.game_length * 2:
-        raise ValueError(
-            f"Not enough data for {symbol}. Need at least {config.game_length * 2} candles."
-        )
+    # Check if we have enough data for each symbol
+    for symbol in symbols:
+        if len(data_dict[symbol]) < config.game_length * 2:
+            raise ValueError(
+                f"Not enough data for {symbol}. Need at least {config.game_length * 2} candles."
+            )
 
-    # Create environment factory function for vectorization
+    # Create a factory for environments that randomly selects a symbol for each environment
     def make_env():
+        # Randomly select a symbol from the list for this environment
+        symbol = np.random.choice(symbols)
         return TradingEnv(
             data_dict=data_dict,
             symbol=symbol,
@@ -206,10 +219,19 @@ def train_agent(
             commission_rate=config.commission_rate,
             random_start=True,
             full_data_evaluation=False,  # Training mode uses random segments
+            max_episode_steps=config.max_episode_steps,  # Add maximum steps per episode
         )
 
-    # Create one environment to get dimensions
-    env = make_env()
+    # Create one environment to get dimensions - use the first symbol as reference
+    # All environments should have the same observation and action spaces
+    env = TradingEnv(
+        data_dict=data_dict,
+        symbol=symbols[0],
+        initial_balance=initial_balance,
+        game_length=config.game_length,
+        window_size=config.window_size,
+        commission_rate=config.commission_rate,
+    )
     feature_dim = env.observation_space.shape[0]
     action_dim = env.action_space.n
 
@@ -218,7 +240,7 @@ def train_agent(
 
     # Training loop
     print(
-        f"{Fore.GREEN}🚀 Training on {symbol} for {num_epochs} epochs using {config.num_parallel_envs} parallel environments...{Style.RESET_ALL}"
+        f"{Fore.GREEN}🚀 Training on {len(symbols)} assets ({', '.join(symbols)}) for {num_epochs} epochs using {config.num_parallel_envs} parallel environments...{Style.RESET_ALL}"
     )
     epoch_rewards = []
 
@@ -227,12 +249,15 @@ def train_agent(
     action_names = [a.name for a in TradingAction]
 
     for epoch in progress_bar:
-        # Collect trajectories using parallel environments
+        # Collect trajectories using parallel environments with random asset selection
         states, actions, rewards, dones, next_states, log_probs, _ = (
             ppo_agent.collect_trajectories_parallel(
                 make_env,
                 n_envs=config.num_parallel_envs,
-                steps_per_env=steps_per_epoch // config.num_parallel_envs,
+                steps_per_env=max(
+                    config.max_episode_steps,
+                    steps_per_epoch // config.num_parallel_envs,
+                ),  # Ensure we collect at least one full episode
                 disable_progress=True,  # Disable the inner progress bar
             )
         )
@@ -373,6 +398,7 @@ def evaluate_agents(
     episodes=None,
     initial_balance=None,
     use_wandb=None,
+    initial_allocation=0.0,  # Default 0% allocation to crypto
 ):
     """
     Evaluate and compare agents: trained agent vs random agent vs buy and hold.
@@ -386,6 +412,7 @@ def evaluate_agents(
         episodes: Number of evaluation episodes (overrides config)
         initial_balance: Initial trading balance (overrides config)
         use_wandb: Whether to use Weights & Biases for tracking (overrides config)
+        initial_allocation: Initial allocation to crypto (0.0 to 1.0)
 
     Returns:
         Dictionary with performance results
@@ -397,18 +424,50 @@ def evaluate_agents(
     )
     use_wandb = use_wandb if use_wandb is not None else config.use_wandb
 
-    # Setup environments for full data evaluation
+    # Calculate total dataset length for progress reporting
+    dataset_length = len(data_dict[symbol]) - config.window_size
+    print(
+        f"Full dataset evaluation: {dataset_length} steps (approx. {dataset_length/1440:.1f} days)"
+    )
+
+    # Creating new environment for evaluation with appropriate state_dim
     env = TradingEnv(
         data_dict=data_dict,
         symbol=symbol,
-        initial_balance=initial_balance,
-        game_length=len(data_dict[symbol]) - config.window_size,  # Use full data length
+        initial_balance=initial_balance
+        * (1.0 - initial_allocation),  # Adjusted for allocation
+        game_length=dataset_length,  # Use full data length
         window_size=config.window_size,
         commission_rate=config.commission_rate,
         random_start=False,
         full_data_evaluation=True,  # Evaluation mode uses full dataset
     )
 
+    # If we have initial allocation, add crypto holdings after reset
+    if initial_allocation > 0.0:
+        print(
+            f"Setting initial allocation: {initial_allocation*100:.1f}% in crypto, {(1.0-initial_allocation)*100:.1f}% in cash"
+        )
+        state, info = env.reset()
+
+        # Calculate how much crypto to buy
+        crypto_value = initial_balance * initial_allocation
+        price = data_dict[symbol].iloc[env.current_step]["close"]
+        crypto_amount = crypto_value / price
+
+        # Manually set the environment state
+        env.crypto_holdings = crypto_amount
+        env.crypto_value = crypto_value
+        env._update_portfolio_value()  # Recalculate portfolio value
+
+        # Reset the environment state
+        env.portfolio_history = [env.total_portfolio_value]
+        env.previous_portfolio_value = env.total_portfolio_value
+
+        # We need to reset env again to get clean state
+        env.reset()
+
+    # Create buy-and-hold environment with same settings
     buyhold_env = BuyAndHoldEnv(
         data_dict=data_dict,
         symbol=symbol,
@@ -429,9 +488,167 @@ def evaluate_agents(
             print(
                 f"{Fore.CYAN}📂 Loading trained model from {trained_model_path}{Style.RESET_ALL}"
             )
+
+            # Check state dimensions and adjust if needed
             feature_dim = env.observation_space.shape[0]
             action_dim = env.action_space.n
+
+            # Load the model to check its state_dim
+            checkpoint = torch.load(f"{trained_model_path}.pt", weights_only=False)
+            model_state_dim = checkpoint["state_dim"]
+
+            if model_state_dim != feature_dim:
+                print(
+                    f"{Fore.YELLOW}⚠️ State dimension mismatch: model expects {model_state_dim}, environment has {feature_dim}{Style.RESET_ALL}"
+                )
+                print(
+                    f"{Fore.YELLOW}Adjusting environment window_size to match model...{Style.RESET_ALL}"
+                )
+
+                # Recalculate window_size based on feature columns count
+                feature_columns_count = len(env.feature_columns)
+
+                if model_state_dim % feature_columns_count == 0:
+                    # Perfect division case
+                    new_window_size = model_state_dim // feature_columns_count
+                    print(
+                        f"{Fore.CYAN}Calculated new window_size: {new_window_size} based on {feature_columns_count} features{Style.RESET_ALL}"
+                    )
+                else:
+                    # Imperfect division - we need to be flexible
+                    print(
+                        f"{Fore.YELLOW}Feature count ({feature_columns_count}) doesn't divide model dimension ({model_state_dim}) evenly{Style.RESET_ALL}"
+                    )
+                    print(
+                        f"{Fore.YELLOW}Using a flexible approach to match dimensions...{Style.RESET_ALL}"
+                    )
+
+                    # Try to find the closest window size
+                    closest_window_size = round(model_state_dim / feature_columns_count)
+                    expected_dim = closest_window_size * feature_columns_count
+                    print(
+                        f"{Fore.CYAN}Using window_size: {closest_window_size} which gives dimension: {expected_dim}{Style.RESET_ALL}"
+                    )
+                    new_window_size = closest_window_size
+
+                # Recreate environments with adjusted window size
+                env = TradingEnv(
+                    data_dict=data_dict,
+                    symbol=symbol,
+                    initial_balance=initial_balance * (1.0 - initial_allocation),
+                    game_length=dataset_length,
+                    window_size=new_window_size,  # Updated window size
+                    commission_rate=config.commission_rate,
+                    random_start=False,
+                    full_data_evaluation=True,
+                )
+
+                buyhold_env = BuyAndHoldEnv(
+                    data_dict=data_dict,
+                    symbol=symbol,
+                    initial_balance=initial_balance,
+                    game_length=len(data_dict[symbol]) - new_window_size,
+                    window_size=new_window_size,  # Updated window size
+                    commission_rate=config.commission_rate,
+                    random_start=False,
+                    full_data_evaluation=True,
+                )
+
+                # Verify adjustment worked
+                new_feature_dim = env.observation_space.shape[0]
+                if new_feature_dim != model_state_dim:
+                    print(
+                        f"{Fore.RED}❌ Dimension mismatch persists. Model: {model_state_dim}, Environment: {new_feature_dim}{Style.RESET_ALL}"
+                    )
+
+                    # Fall back to forcing exact dimension match by modifying the environment
+                    print(
+                        f"{Fore.YELLOW}Attempting to force dimension compatibility...{Style.RESET_ALL}"
+                    )
+
+                    # Create a new environment class that can adapt to the model's dimension
+                    class DimensionAdaptedEnv(TradingEnv):
+                        _adaptation_message_shown = (
+                            False  # Class variable instead of instance variable
+                        )
+
+                        def _get_state(self):
+                            """Modified state function that adjusts dimensions to match the model"""
+                            original_state = super()._get_state()
+
+                            # If dimensions match exactly, return as is
+                            if len(original_state) == model_state_dim:
+                                return original_state
+
+                            # If original state is larger, truncate
+                            if len(original_state) > model_state_dim:
+                                if not DimensionAdaptedEnv._adaptation_message_shown:
+                                    print(
+                                        f"{Fore.GREEN}✅ Adapting state by truncating from {len(original_state)} to {model_state_dim}{Style.RESET_ALL}"
+                                    )
+                                    DimensionAdaptedEnv._adaptation_message_shown = True
+                                return original_state[:model_state_dim]
+
+                            # If original state is smaller, pad with zeros
+                            if len(original_state) < model_state_dim:
+                                padding = np.zeros(
+                                    model_state_dim - len(original_state)
+                                )
+                                if not DimensionAdaptedEnv._adaptation_message_shown:
+                                    print(
+                                        f"{Fore.GREEN}✅ Adapting state by padding from {len(original_state)} to {model_state_dim}{Style.RESET_ALL}"
+                                    )
+                                    DimensionAdaptedEnv._adaptation_message_shown = True
+                                return np.concatenate([original_state, padding])
+
+                    # Create adapted environments
+                    env = DimensionAdaptedEnv(
+                        data_dict=data_dict,
+                        symbol=symbol,
+                        initial_balance=initial_balance * (1.0 - initial_allocation),
+                        game_length=dataset_length,
+                        window_size=new_window_size,
+                        commission_rate=config.commission_rate,
+                        random_start=False,
+                        full_data_evaluation=True,
+                    )
+
+                    class DimensionAdaptedBuyHoldEnv(
+                        DimensionAdaptedEnv, BuyAndHoldEnv
+                    ):
+                        pass
+
+                    buyhold_env = DimensionAdaptedBuyHoldEnv(
+                        data_dict=data_dict,
+                        symbol=symbol,
+                        initial_balance=initial_balance,
+                        game_length=len(data_dict[symbol]) - new_window_size,
+                        window_size=new_window_size,
+                        commission_rate=config.commission_rate,
+                        random_start=False,
+                        full_data_evaluation=True,
+                    )
+
+                    # Override observation space to match model
+                    env.observation_space = gym.spaces.Box(
+                        low=0, high=1, shape=(model_state_dim,), dtype=np.float32
+                    )
+                    buyhold_env.observation_space = gym.spaces.Box(
+                        low=0, high=1, shape=(model_state_dim,), dtype=np.float32
+                    )
+
+                    print(
+                        f"{Fore.GREEN}✅ Successfully forced dimension compatibility{Style.RESET_ALL}"
+                    )
+                else:
+                    print(
+                        f"{Fore.GREEN}✅ Successfully adjusted window size to {new_window_size}{Style.RESET_ALL}"
+                    )
+
+            # Now load the model with correct dimensions
             trained_agent = PPOAgent.load_model(trained_model_path)
+            if trained_agent is None:
+                raise ValueError(f"Failed to load the model from {trained_model_path}")
         else:
             raise ValueError(
                 f"No trained model found at {trained_model_path}. Please train first."
@@ -528,22 +745,64 @@ def evaluate_agent(agent, env, episodes=1):
         portfolio_values = [info["total_portfolio_value"]]
         timestamps = [info["timestamp"]]
 
-        # Create progress bar for long evaluation
-        progress_bar = tqdm(desc="Evaluating on full dataset", unit="step")
+        # For debugging - track actions
+        action_counts = [0, 0, 0, 0, 0]  # Counts for each action type
+        balance_history = [info["account_balance"]]
+        holdings_history = [info["crypto_holdings"]]
 
+        # Create progress bar for long evaluation
+        total_steps = env.end_index - env.current_step
+        progress_bar = tqdm(
+            total=total_steps, desc=f"Evaluating on full dataset", unit="step"
+        )
+
+        step_count = 0
         while not done:
             action, _ = agent.select_action(state)
             state, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
 
+            # Track statistics
+            action_counts[action] += 1
+            balance_history.append(info["account_balance"])
+            holdings_history.append(info["crypto_holdings"])
+
             portfolio_values.append(info["total_portfolio_value"])
             timestamps.append(info["timestamp"])
+
+            step_count += 1
             progress_bar.update(1)
+
+            # Update progress bar with current portfolio value
+            if step_count % 100 == 0:  # Update less frequently to reduce overhead
+                progress_bar.set_postfix({"portfolio": f"${portfolio_values[-1]:.2f}"})
 
         progress_bar.close()
 
+        # Print action distribution
+        total_actions = sum(action_counts)
+        action_names = ["DO_NOTHING", "SELL_20%", "SELL_10%", "BUY_10%", "BUY_20%"]
+        print("\nAction distribution:")
+        for i, count in enumerate(action_counts):
+            percentage = (count / total_actions) * 100 if total_actions > 0 else 0
+            print(f"  {action_names[i]}: {count} ({percentage:.1f}%)")
+
+        # Calculate trading statistics
+        avg_balance = (
+            sum(balance_history) / len(balance_history) if balance_history else 0
+        )
+        final_balance = balance_history[-1] if balance_history else 0
+        max_holdings = max(holdings_history) if holdings_history else 0
+        final_holdings = holdings_history[-1] if holdings_history else 0
+
+        print(f"Trading statistics:")
+        print(f"  Initial balance: ${balance_history[0]:.2f}")
+        print(f"  Final balance: ${final_balance:.2f}")
+        print(f"  Final holdings: {final_holdings:.6f}")
+        print(f"  Max holdings: {max_holdings:.6f}")
+
         print(
-            f"Full dataset evaluation: Final portfolio value = ${portfolio_values[-1]:.2f}"
+            f"Full dataset evaluation: Final portfolio value = ${portfolio_values[-1]:.2f} after {step_count} steps"
         )
         return portfolio_values
     else:
@@ -630,10 +889,11 @@ def main():
 
     # Data fetching arguments
     parser.add_argument(
-        "--symbol",
+        "--symbols",
         type=str,
-        default="BTCUSDT",
-        help="Symbol to trade (default: BTCUSDT)",
+        nargs="+",
+        default=["BTCUSDT"],
+        help="Symbols to trade (default: BTCUSDT). Can provide multiple symbols separated by spaces.",
     )
     parser.add_argument(
         "--lookback_days", type=int, help="Days of historical data to use"
@@ -693,18 +953,48 @@ def main():
         action="store_true",
         help="Use the most recent 30-day period for evaluation (disables random evaluation)",
     )
+    parser.add_argument(
+        "--eval_symbol",
+        type=str,
+        help="Symbol to use for evaluation (if different from training symbols)",
+    )
+    parser.add_argument(
+        "--eval_random",
+        action="store_true",
+        help="Evaluate on a random symbol from the available symbols",
+    )
+    parser.add_argument(
+        "--eval_all",
+        action="store_true",
+        help="Evaluate on all available symbols",
+    )
 
     # Misc arguments
     parser.add_argument(
         "--model_path",
         type=str,
         default=None,
-        help="Custom model path (default: saved_model_{symbol})",
+        help="Custom model path (default: saved_model_crypto)",
     )
 
     # Add W&B arg
     parser.add_argument(
         "--wandb", action="store_true", help="Track metrics using Weights & Biases"
+    )
+
+    # Add arg to disable parallel environments
+    parser.add_argument(
+        "--no_parallel",
+        action="store_true",
+        help="Disable parallel environments and use a single environment",
+    )
+
+    # Add arg for initial allocation
+    parser.add_argument(
+        "--initial_allocation",
+        type=float,
+        default=0.0,
+        help="Initial allocation to crypto (0.0 to 1.0) for evaluation",
     )
 
     args = parser.parse_args()
@@ -713,10 +1003,10 @@ def main():
     config = Config()
 
     # Override config with args if provided
-    if args.symbol:
-        config.symbols = [args.symbol]
+    if args.symbols:
+        config.symbols = args.symbols
     if args.lookback_days:
-        config.lookback_days = args.lookback_days
+        config.training_lookback_days = args.lookback_days
     if args.force_refresh:
         config.force_refresh = args.force_refresh
     if args.epochs:
@@ -744,72 +1034,175 @@ def main():
         config.random_eval_period = True
     if args.fixed_eval:
         config.random_eval_period = False
+    # Disable parallel environments if requested
+    if args.no_parallel:
+        config.num_parallel_envs = 1
 
-    # Symbol to focus on (first in list)
-    symbol = config.symbols[0]
+    # Determine which symbols to use for training
+    training_symbols = config.symbols
 
-    # Determine model path
-    model_path = args.model_path if args.model_path else f"saved_model_{symbol}"
+    # Available symbols for evaluation (use the ones specified in args or config)
+    available_symbols = config.symbols
+
+    # For evaluation, determine which symbols to evaluate on
+    eval_symbols = []
+
+    if args.eval_symbol:
+        # Specific symbol provided via command line
+        eval_symbols = [args.eval_symbol]
+    elif args.eval_random:
+        # Random symbol selection
+        import random
+
+        eval_symbols = [random.choice(available_symbols)]
+        print(
+            f"{Fore.CYAN}🎲 Randomly selected {eval_symbols[0]} for evaluation{Style.RESET_ALL}"
+        )
+    elif args.eval_all:
+        # All available symbols
+        eval_symbols = available_symbols.copy()
+    else:
+        # Default to first training symbol
+        eval_symbols = [training_symbols[0]]
+
+    # Generate model path based on symbols if not provided
+    if not args.model_path:
+        # Use a generic model name instead of making it currency-dependent
+        model_path = "saved_model_crypto"
+    else:
+        model_path = args.model_path
+
     model_exists = os.path.exists(f"{model_path}.pt")
 
     # Initialize trained_agent to None
     trained_agent = None
 
-    # Determine operation mode
-    mode_train = args.train or not model_exists
-    mode_evaluate = args.evaluate or (
-        model_exists and not args.train and not args.testnet
+    # Determine operation mode - prioritize explicit flags
+    # First check for explicit evaluation flags
+    mode_evaluate = (
+        args.evaluate or args.eval_random or args.eval_all or args.eval_symbol
     )
+
+    # Only train if explicitly requested or if no model exists AND no evaluation flags
+    mode_train = args.train or (not model_exists and not mode_evaluate)
+
     mode_testnet = args.testnet
 
-    # Fetch training data first
+    # Print selected modes for debugging
+    if mode_train:
+        print(f"{Fore.CYAN}ℹ️ Mode: Training enabled{Style.RESET_ALL}")
+    if mode_evaluate:
+        print(
+            f"{Fore.CYAN}ℹ️ Mode: Evaluation enabled on {len(eval_symbols)} symbol(s): {', '.join(eval_symbols)}{Style.RESET_ALL}"
+        )
+    if mode_testnet:
+        print(f"{Fore.CYAN}ℹ️ Mode: Testnet enabled{Style.RESET_ALL}")
+
+    # Fetch training data for all symbols
     if mode_train:
         print(f"\n{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}🏋️ Training agent for {symbol}{Style.RESET_ALL}")
+        print(
+            f"{Fore.GREEN}🏋️ Training agent on {len(training_symbols)} symbols: {', '.join(training_symbols)}{Style.RESET_ALL}"
+        )
         print(f"{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
 
-        training_data = fetch_data(config=config, symbols=[symbol], for_training=True)
+        training_data = fetch_data(
+            config=config, symbols=training_symbols, for_training=True
+        )
 
         trained_agent = train_agent(
             training_data,
-            symbol,
+            training_symbols,
             config=config,
             model_save_path=model_path,
         )
 
-    # Fetch evaluation data separately
+    # Fetch evaluation data separately - just for the eval symbol
     if mode_evaluate:
         print(f"\n{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}📊 Evaluating performance for {symbol}{Style.RESET_ALL}")
+        print(
+            f"{Fore.GREEN}📊 Evaluating performance on {', '.join(eval_symbols)}{Style.RESET_ALL}"
+        )
         print(f"{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
 
-        eval_data = fetch_data(config=config, symbols=[symbol], for_training=False)
+        # Check if model exists before proceeding
+        if not model_exists:
+            print(
+                f"{Fore.RED}❌ Error: No trained model found at {model_path}. Cannot evaluate.{Style.RESET_ALL}"
+            )
+            print(
+                f"{Fore.YELLOW}Hint: Use --train flag to train a model first, or specify a different model with --model_path.{Style.RESET_ALL}"
+            )
+            return  # Exit the function early
 
-        results = evaluate_agents(
-            eval_data,
-            symbol,
-            config=config,
-            trained_agent=trained_agent,
-            trained_model_path=model_path,
+        # Fetch data only for the symbols we need to evaluate
+        print(
+            f"{Fore.CYAN}Fetching data specifically for evaluation on: {', '.join(eval_symbols)}{Style.RESET_ALL}"
         )
+        eval_data = fetch_data(config=config, symbols=eval_symbols, for_training=False)
+
+        # Store results for all symbols
+        all_results = {}
+
+        # Evaluate on each symbol
+        for current_symbol in eval_symbols:
+            print(f"\n{Fore.YELLOW}Evaluating on {current_symbol}:{Style.RESET_ALL}")
+
+            # Evaluate the current symbol
+            results = evaluate_agents(
+                eval_data,
+                current_symbol,
+                config=config,
+                trained_agent=trained_agent,
+                trained_model_path=model_path,
+                initial_allocation=args.initial_allocation,
+            )
+
+            # Store results
+            all_results[current_symbol] = results
+
+        # Print comparative summary if evaluating on multiple symbols
+        if len(eval_symbols) > 1:
+            print(f"\n{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}📊 Comparative Performance Summary{Style.RESET_ALL}")
+
+            print(
+                f"{'Symbol':<10} {'Random %':<10} {'Buy & Hold %':<15} {'Trained Agent %':<15} {'vs Buy & Hold':<12}"
+            )
+            print(f"{'-'*70}")
+
+            for symbol, result in all_results.items():
+                random_return = result["random"]["return"]
+                buyhold_return = result["buyhold"]["return"]
+                trained_return = result["trained"]["return"]
+                performance_vs_buyhold = trained_return - buyhold_return
+
+                # Color code the comparison
+                comparison_color = (
+                    Fore.GREEN if performance_vs_buyhold > 0 else Fore.RED
+                )
+
+                print(
+                    f"{symbol:<10} {random_return:>8.2f}% {buyhold_return:>13.2f}% {trained_return:>13.2f}% {comparison_color}{performance_vs_buyhold:>+10.2f}%{Style.RESET_ALL}"
+                )
 
     # Test with Binance testnet
     if mode_testnet:
         print(f"\n{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
         print(
-            f"{Fore.GREEN}🌐 Testing with Binance testnet for {symbol}{Style.RESET_ALL}"
+            f"{Fore.GREEN}🌐 Testing with Binance testnet for {eval_symbols[0]}{Style.RESET_ALL}"
         )
         print(f"{Fore.GREEN}{'=' * 40}{Style.RESET_ALL}")
         if trained_agent is None:
             feature_dim = TradingEnv(
-                eval_data, symbol, config.initial_balance
+                eval_data, eval_symbols[0], config.initial_balance
             ).observation_space.shape[0]
             action_dim = len(TradingAction)
             trained_agent = PPOAgent.load_model(model_path)
 
         testnet_results = test_with_binance(
             trained_agent,
-            symbol,
+            eval_symbols[0],
             config=config,
         )
 

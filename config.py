@@ -42,22 +42,32 @@ class Config:
     window_size: int = 30  # How many past candles to include in state
     commission_rate: float = 0.001  # 0.1% commission rate (Binance standard)
     initial_balance: float = 10000.0
+    max_episode_steps: int = (
+        1440  # Maximum steps per episode (updated to match game_length)
+    )
 
     # Training parameters
     eval_episodes: int = 5
-    steps_per_epoch: int = 1440  # Exactly one 24-hour period per epoch
-    epochs: int = 100
-    num_parallel_envs: int = os.cpu_count() - 1 # Number of parallel environments for data collection
-    batch_size: int = 128  # Batch size for PPO updates
+    steps_per_epoch: int = (
+        2880 * 2
+    )  # Increased to ensure complete episodes (4 days per epoch)
+    epochs: int = 2000  # Increased from 100 to 2000
+    num_parallel_envs: int = (
+        os.cpu_count() - 1
+    )  # Number of parallel environments for data collection
+    batch_size: int = 512  # Increased from 128 to 512
 
     # PPO Agent parameters
-    hidden_dim: int = 256  # Number of neurons in hidden layers
+    hidden_dim: int = 512  # Already increased from 256 to 512
     gamma: float = 0.99  # Discount factor for future rewards
     clip_epsilon: float = 0.2  # PPO clipping parameter
-    learning_rate: float = 1e-3  # Learning rate for optimizer
-    ppo_epochs: int = 10  # Number of epochs per update
-    entropy_coef: float = 0.01  # Entropy coefficient for exploration
+    learning_rate: float = 5e-5  # Reduced from 1e-3 to help with longer training
+    ppo_epochs: int = 20  # Increased from 10 to 20 for more updates per batch
+    entropy_coef: float = 0.015  # Increased from 0.01 to encourage more exploration
     value_coef: float = 0.5  # Value loss coefficient
+
+    # Paths
+    model_path: str = None
 
     def __post_init__(self):
         """Validate configuration after initialization"""

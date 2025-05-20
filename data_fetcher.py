@@ -6,7 +6,11 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Union, Tuple
 from tqdm import tqdm
-from technical_indicators import add_technical_indicators, normalize_features
+from technical_indicators import (
+    add_technical_indicators,
+    normalize_features,
+    make_indicators_stationary,
+)
 from datetime import datetime, timedelta
 
 
@@ -280,6 +284,10 @@ def prepare_multi_asset_dataset(
         if add_indicators:
             print(f"Adding technical indicators for {symbol}...")
             df_enhanced = add_technical_indicators(df_enhanced)
+
+            # Make indicators stationary for better ML performance
+            print(f"Making indicators stationary for {symbol}...")
+            df_enhanced = make_indicators_stationary(df_enhanced)
 
             # Normalize features to make them suitable for RL
             print(f"Normalizing features for {symbol}...")

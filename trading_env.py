@@ -33,6 +33,7 @@ class TradingEnv(gym.Env):
         game_length: int = 1440,  # One day of minute candles
         random_start: bool = True,
         full_data_evaluation: bool = False,
+        max_episode_steps: int = 240,  # Force episode termination every 4 hours (240 minutes)
     ):
         """
         Initialize the trading environment.
@@ -46,6 +47,7 @@ class TradingEnv(gym.Env):
             game_length: Length of each game in candles
             random_start: If True, random starting point for each episode
             full_data_evaluation: If True, use full data for evaluation
+            max_episode_steps: Maximum steps before forcing episode termination
         """
         super().__init__()
 
@@ -58,6 +60,8 @@ class TradingEnv(gym.Env):
         self.game_length = game_length
         self.random_start = random_start
         self.full_data_evaluation = full_data_evaluation
+        self.max_episode_steps = max_episode_steps
+        self.steps_in_current_episode = 0
 
         # Define state and action spaces
         # For each time step we get normalized features from the dataframe
@@ -114,6 +118,7 @@ class TradingEnv(gym.Env):
         self.portfolio_history = [self.initial_balance]
         self.last_action = None
         self.previous_portfolio_value = self.initial_balance
+        self.steps_in_current_episode = 0  # Reset episode step counter
 
         # For full data evaluation, start from the beginning
         if self.full_data_evaluation:
@@ -165,6 +170,7 @@ class TradingEnv(gym.Env):
 
         # Move to next time step
         self.current_step += 1
+        self.steps_in_current_episode += 1
 
         # Update portfolio based on new prices
         self._update_portfolio_value()
@@ -178,10 +184,20 @@ class TradingEnv(gym.Env):
         # Get new state
         state = self._get_state()
 
-        # Check if episode is done
-        done = self.current_step >= self.end_index
+        # Check if episode is done due to reaching the end of data
+        done_end_of_data = self.current_step >= self.end_index
 
-        return state, reward, done, False, self._get_info()
+        # Check if episode is done due to reaching maximum episode steps
+        # Only apply step limit during training, not during full data evaluation
+        done_max_steps = False
+        if not self.full_data_evaluation:
+            done_max_steps = self.steps_in_current_episode >= self.max_episode_steps
+
+        # Episode is done if either condition is met
+        terminated = done_end_of_data or done_max_steps
+        truncated = False
+
+        return state, reward, terminated, truncated, self._get_info()
 
     def _take_action(self, action: int) -> None:
         """
@@ -383,20 +399,54 @@ class TradingEnv(gym.Env):
         market_return = (current_price - previous_price) / previous_price
         alpha_component = raw_return - market_return
 
-        # Trend alignment reward
+        # Trend alignment reward - significantly increased
         trend_component = self._calculate_trend_alignment(self.last_action)
 
-        # Trading frequency penalty
-        trade_component = (
-            -0.0005 if self.last_action != TradingAction.DO_NOTHING.value else 0
+        # Trading frequency penalty - dramatically increased to discourage excessive trading
+        # This is critical - with 0.1% commission per trade, frequent trading erodes capital
+        trade_penalty = (
+            -0.005 if self.last_action != TradingAction.DO_NOTHING.value else 0.001
         )
 
-        # Combine all reward components with weighting
+        # Extra reward for holding during profitable market moves
+        holding_reward = 0.0
+        if (
+            self.last_action == TradingAction.DO_NOTHING.value
+            and market_return > 0
+            and self.crypto_holdings > 0
+        ):
+            # Reward for holding crypto during uptrends
+            holding_reward = 0.002
+
+        # Capital preservation component - add significant penalty for dropping below initial balance
+        # This provides a strong incentive to preserve capital and avoid excessive risk
+        capital_preservation = 0.0
+        if self.total_portfolio_value < self.initial_balance:
+            # Calculate how far below initial balance we are (as a percentage)
+            loss_percentage = (
+                self.initial_balance - self.total_portfolio_value
+            ) / self.initial_balance
+
+            # Progressive penalty that grows exponentially as losses increase
+            # Small losses (~5%) get a minor penalty, but larger losses (>10%) receive severe penalties
+            capital_preservation = (
+                -0.01 * (loss_percentage**2) * 10
+            )  # Quadratic penalty
+
+            # Additional severe penalty if portfolio drops below 80% of initial balance
+            if self.total_portfolio_value < (self.initial_balance * 0.8):
+                capital_preservation -= 0.02  # Extra fixed penalty for severe drawdown
+
+        # Combine all reward components with updated weighting
+        # Increase the penalties for trading and rewards for trend alignment
         total_reward = (
-            self.sharpe_weight * sharpe_component
-            + self.alpha_weight * alpha_component
-            + self.trend_weight * trend_component
-            + self.trade_weight * trade_component
+            0.35 * sharpe_component  # Reduced weight for Sharpe
+            + 0.15 * alpha_component  # Reduced weight for alpha
+            + 0.15 * trend_component  # Reduced weight for trend alignment
+            + 0.15 * trade_penalty  # Reduced weight for trading penalty
+            + 0.10
+            * holding_reward  # Reduced weight for holding during profitable trends
+            + 0.10 * capital_preservation  # New capital preservation component
         )
 
         return total_reward
@@ -404,26 +454,107 @@ class TradingEnv(gym.Env):
     def _calculate_trend_alignment(self, action):
         """Calculate bonus for trading aligned with market trend"""
         # Default - no bonus
-        alignment_bonus = 0
+        alignment_bonus = 0.0
 
-        # Get technical indicators for trend detection
-        if all(indicator in self.data.columns for indicator in ["sma_5", "sma_20"]):
+        # Use stationary indicators for trend detection - prefer crossovers and distances over raw SMAs
+        if "sma_5_sma_20_crossover" in self.data.columns:
+            # Use the crossover indicator directly (1 = uptrend, 0 = downtrend)
+            is_uptrend = (
+                self.data.iloc[self.current_step]["sma_5_sma_20_crossover"] == 1
+            )
+
+            # Use distance between MAs to gauge trend strength
+            if "sma_5_sma_20_distance" in self.data.columns:
+                trend_strength = abs(
+                    self.data.iloc[self.current_step]["sma_5_sma_20_distance"]
+                )
+            else:
+                trend_strength = 0.01  # Default strength if distance not available
+
+            # Check if action aligns with trend - increased rewards
+            if is_uptrend:  # Uptrend
+                if action in [
+                    TradingAction.BUY_10_PERCENT.value,
+                    TradingAction.BUY_20_PERCENT.value,
+                ]:
+                    alignment_bonus = 0.005 * (
+                        1 + trend_strength
+                    )  # Higher bonus for buying in uptrend
+                elif (
+                    action == TradingAction.DO_NOTHING.value
+                    and self.crypto_holdings > 0
+                ):
+                    alignment_bonus = 0.003 * (
+                        1 + trend_strength
+                    )  # Reward for holding crypto in uptrend
+                elif action in [
+                    TradingAction.SELL_10_PERCENT.value,
+                    TradingAction.SELL_20_PERCENT.value,
+                ]:
+                    alignment_bonus = -0.003 * (
+                        1 + trend_strength
+                    )  # Penalty for selling in uptrend
+            else:  # Downtrend
+                if action in [
+                    TradingAction.SELL_10_PERCENT.value,
+                    TradingAction.SELL_20_PERCENT.value,
+                ]:
+                    alignment_bonus = 0.005 * (
+                        1 + trend_strength
+                    )  # Higher bonus for selling in downtrend
+                elif (
+                    action == TradingAction.DO_NOTHING.value
+                    and self.account_balance > 0
+                ):
+                    alignment_bonus = 0.002 * (
+                        1 + trend_strength
+                    )  # Reward for holding cash in downtrend
+                elif action in [
+                    TradingAction.BUY_10_PERCENT.value,
+                    TradingAction.BUY_20_PERCENT.value,
+                ]:
+                    alignment_bonus = -0.003 * (
+                        1 + trend_strength
+                    )  # Penalty for buying in downtrend
+
+        # Fallback to original SMA comparison if stationary indicators not available
+        elif all(indicator in self.data.columns for indicator in ["sma_5", "sma_20"]):
             sma_short = self.data.iloc[self.current_step]["sma_5"]
             sma_long = self.data.iloc[self.current_step]["sma_20"]
 
-            # Check if action aligns with trend
+            # Check if action aligns with trend - increased rewards
             if sma_short > sma_long:  # Uptrend
                 if action in [
                     TradingAction.BUY_10_PERCENT.value,
                     TradingAction.BUY_20_PERCENT.value,
                 ]:
-                    alignment_bonus = 0.001  # Small bonus for buying in uptrend
+                    alignment_bonus = 0.005  # Higher bonus for buying in uptrend
+                elif (
+                    action == TradingAction.DO_NOTHING.value
+                    and self.crypto_holdings > 0
+                ):
+                    alignment_bonus = 0.003  # Reward for holding crypto in uptrend
+                elif action in [
+                    TradingAction.SELL_10_PERCENT.value,
+                    TradingAction.SELL_20_PERCENT.value,
+                ]:
+                    alignment_bonus = -0.003  # Penalty for selling in uptrend
             elif sma_short < sma_long:  # Downtrend
                 if action in [
                     TradingAction.SELL_10_PERCENT.value,
                     TradingAction.SELL_20_PERCENT.value,
                 ]:
-                    alignment_bonus = 0.001  # Small bonus for selling in downtrend
+                    alignment_bonus = 0.005  # Higher bonus for selling in downtrend
+                elif (
+                    action == TradingAction.DO_NOTHING.value
+                    and self.account_balance > 0
+                ):
+                    alignment_bonus = 0.002  # Reward for holding cash in downtrend
+                elif action in [
+                    TradingAction.BUY_10_PERCENT.value,
+                    TradingAction.BUY_20_PERCENT.value,
+                ]:
+                    alignment_bonus = -0.003  # Penalty for buying in downtrend
 
         # If no SMAs available, check simple price movement
         else:
@@ -437,13 +568,23 @@ class TradingEnv(gym.Env):
                     TradingAction.BUY_10_PERCENT.value,
                     TradingAction.BUY_20_PERCENT.value,
                 ]:
-                    alignment_bonus = 0.001
+                    alignment_bonus = 0.005
+                elif (
+                    action == TradingAction.DO_NOTHING.value
+                    and self.crypto_holdings > 0
+                ):
+                    alignment_bonus = 0.003  # Reward for holding crypto in uptrend
             elif current_price < prev_price:  # Downtrend
                 if action in [
                     TradingAction.SELL_10_PERCENT.value,
                     TradingAction.SELL_20_PERCENT.value,
                 ]:
-                    alignment_bonus = 0.001
+                    alignment_bonus = 0.005
+                elif (
+                    action == TradingAction.DO_NOTHING.value
+                    and self.account_balance > 0
+                ):
+                    alignment_bonus = 0.002  # Reward for holding cash in downtrend
 
         return alignment_bonus
 
