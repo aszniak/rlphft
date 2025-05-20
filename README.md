@@ -122,19 +122,21 @@ This will generate a PNG file showing the selected cryptocurrency with all techn
 
   - `main.py` - Main script for cryptocurrency trading with RL
 
-- **Agents and Models:**
+- **Agents and Environments:**
 
-  - `agent.py` - Implementation of the PPO and other agents
-  - `trading_env.py` - Gymnasium-compatible trading environment
+  - `agent.py` - Implementation of the PPO and Random agents
+  - `trading_env.py` - Gymnasium-compatible trading environment with TradingEnv and BuyAndHoldEnv
+
+- **Training and Evaluation:**
+
+  - `training.py` - Functions for training the RL agent
+  - `evaluation.py` - Functions for evaluating agents and testing with Binance
 
 - **Data Processing:**
 
-  - `data_fetcher.py` - Functions to fetch crypto data from Binance API
-  - `technical_indicators.py` - Implementations of technical indicators
-  - `visualize_indicators.py` - Visualization of technical indicators
+  - `utils.py` - Utility functions including data fetching and processing
 
 - **Configuration:**
-
   - `config.py` - Centralized configuration system for the trading agent
   - `config.env` - Environment variables and API keys (gitignored)
   - `requirements.txt` - List of required Python packages
