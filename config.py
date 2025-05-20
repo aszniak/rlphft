@@ -41,7 +41,7 @@ class Config:
     game_length: int = 1440  # 24 hours of minute candles
     window_size: int = 30  # How many past candles to include in state
     commission_rate: float = 0.001  # 0.1% commission rate (Binance standard)
-    initial_balance: float = 10000.0
+    initial_balance: float = 10000.0  # Updated from default value
     max_episode_steps: int = (
         1440  # Maximum steps per episode (updated to match game_length)
     )
@@ -51,20 +51,25 @@ class Config:
     steps_per_epoch: int = (
         2880 * 2
     )  # Increased to ensure complete episodes (4 days per epoch)
-    epochs: int = 2000  # Increased from 100 to 2000
-    num_parallel_envs: int = (
-        os.cpu_count() - 1
-    )  # Number of parallel environments for data collection
-    batch_size: int = 512  # Increased from 128 to 512
+    epochs: int = 100  # Reduced from 2000 to a more reasonable default
+    num_parallel_envs: int = 32  # Updated to use more parallel environments
+    batch_size: int = 2048  # Updated to a larger batch size for better GPU utilization
+
+    # Hardware optimization flags
+    optimize_hardware: bool = True  # Enable hardware optimization by default
+    use_mixed_precision: bool = True  # Enable mixed precision training by default
 
     # PPO Agent parameters
-    hidden_dim: int = 512  # Already increased from 256 to 512
+    hidden_dim: int = 768  # Increased from 512 to 768 for better representation
     gamma: float = 0.99  # Discount factor for future rewards
     clip_epsilon: float = 0.2  # PPO clipping parameter
-    learning_rate: float = 5e-5  # Reduced from 1e-3 to help with longer training
-    ppo_epochs: int = 20  # Increased from 10 to 20 for more updates per batch
+    learning_rate: float = 1e-5  # Updated to a smaller learning rate
+    ppo_epochs: int = 5  # Reduced for large batch sizes
     entropy_coef: float = 0.015  # Increased from 0.01 to encourage more exploration
     value_coef: float = 0.5  # Value loss coefficient
+    clip_grad_norm: float = (
+        5.0  # Higher gradient clipping threshold for large batch size
+    )
 
     # Paths
     model_path: str = None
