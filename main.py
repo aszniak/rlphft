@@ -140,6 +140,18 @@ def main():
         help="Initial allocation to crypto (0.0 to 1.0) for evaluation",
     )
 
+    # Add sentiment data arguments
+    parser.add_argument(
+        "--sentiment",
+        action="store_true",
+        help="Enable sentiment data from Santiment API (requires API key)",
+    )
+    parser.add_argument(
+        "--no_sentiment",
+        action="store_true",
+        help="Disable sentiment data even if API key is available",
+    )
+
     args = parser.parse_args()
 
     # Create config from defaults and override with args
@@ -162,6 +174,14 @@ def main():
         config.optimize_hardware = False
     if args.no_mixed_precision:
         config.use_mixed_precision = False
+
+    # Handle sentiment data options
+    if args.sentiment:
+        config.use_sentiment = True
+        print(f"{Fore.CYAN}🔍 Sentiment analysis enabled{Style.RESET_ALL}")
+    if args.no_sentiment:
+        config.use_sentiment = False
+        print(f"{Fore.CYAN}🔍 Sentiment analysis disabled{Style.RESET_ALL}")
 
     # Handle fast/full training modes
     if args.fast_train:

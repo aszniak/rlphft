@@ -19,6 +19,21 @@ class Config:
     # API settings
     api_key: str = os.getenv("BINANCE_API_KEY", "")
 
+    # Santiment API settings
+    santiment_api_key: str = os.getenv("SANTIMENT_API_KEY", "")
+    use_sentiment: bool = True  # Enable sentiment data by default
+    sentiment_metrics: List[str] = field(
+        default_factory=lambda: [
+            "sentiment_volume_consumed_twitter",
+            "social_volume_twitter",
+            "social_dominance_twitter",
+            "dev_activity",
+            "github_activity",
+            "exchange_inflow",
+            "exchange_outflow",
+        ]
+    )
+
     # Data settings
     interval: str = "1m"  # 1-minute candles
     training_lookback_days: int = 100  # 144,000 candles (100 days)
@@ -78,6 +93,12 @@ class Config:
         """Validate configuration after initialization"""
         if not self.api_key and not os.path.exists("config.env"):
             print("Warning: API key not found. Some features may not work.")
+
+        if not self.santiment_api_key and self.use_sentiment:
+            print(
+                "Warning: Santiment API key not found. Sentiment features will be disabled."
+            )
+            self.use_sentiment = False
 
         if self.window_size >= self.game_length:
             raise ValueError("window_size must be smaller than game_length")

@@ -13,6 +13,19 @@ from technical_indicators import (
 )
 from datetime import datetime, timedelta
 
+# Import Santiment API functionality
+try:
+    from santiment_api import (
+        fetch_santiment_data,
+        merge_sentiment_with_price,
+        normalize_sentiment_features,
+    )
+
+    SANTIMENT_AVAILABLE = True
+except ImportError:
+    SANTIMENT_AVAILABLE = False
+    print("Santiment API module not available. Continuing without sentiment data.")
+
 
 def fetch_and_cache_klines(
     symbol,
@@ -251,7 +264,9 @@ def fetch_training_data(
 
 
 def prepare_multi_asset_dataset(
-    data_dict: Dict[str, pd.DataFrame], add_indicators: bool = True
+    data_dict: Dict[str, pd.DataFrame],
+    add_indicators: bool = True,
+    add_sentiment: bool = True,
 ) -> Tuple[Dict[str, pd.DataFrame], pd.DataFrame]:
     """
     Prepare a multi-asset dataset suitable for RL training.
@@ -259,6 +274,7 @@ def prepare_multi_asset_dataset(
     Args:
         data_dict: Dictionary mapping symbols to DataFrames
         add_indicators: Whether to add basic technical indicators
+        add_sentiment: Whether to add sentiment data from Santiment API
 
     Returns:
         Tuple containing:
@@ -292,6 +308,36 @@ def prepare_multi_asset_dataset(
             # Normalize features to make them suitable for RL
             print(f"Normalizing features for {symbol}...")
             df_enhanced = normalize_features(df_enhanced)
+
+        # Add sentiment data if requested and available
+        if add_sentiment and SANTIMENT_AVAILABLE:
+            try:
+                print(f"Adding sentiment data for {symbol}...")
+
+                # Get date range from the data
+                start_date = (
+                    df_enhanced["open_time"].min().strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
+                end_date = df_enhanced["open_time"].max().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                # Fetch sentiment data
+                sentiment_metrics = fetch_santiment_data(symbol, start_date, end_date)
+
+                if sentiment_metrics:
+                    # Merge sentiment data with price data
+                    df_enhanced = merge_sentiment_with_price(
+                        df_enhanced, sentiment_metrics
+                    )
+
+                    # Normalize sentiment features
+                    df_enhanced = normalize_sentiment_features(df_enhanced)
+
+                    print(f"✅ Successfully added sentiment data for {symbol}")
+                else:
+                    print(f"⚠️ No sentiment data available for {symbol}")
+            except Exception as e:
+                print(f"⚠️ Error adding sentiment data for {symbol}: {str(e)}")
+                print("Continuing without sentiment data for this symbol.")
 
         # Drop any rows with NaN values (first row will have NaN returns)
         df_enhanced = df_enhanced.dropna()

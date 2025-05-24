@@ -16,6 +16,7 @@ def fetch_data(
     lookback_days=None,
     force_refresh=None,
     for_training=True,  # Parameter to indicate training vs evaluation
+    add_sentiment=None,  # Parameter to control sentiment data inclusion
 ):
     """
     Fetch and prepare data for training or evaluation.
@@ -27,6 +28,7 @@ def fetch_data(
         lookback_days: Days of historical data to fetch (overrides config)
         force_refresh: Whether to force refresh cached data (overrides config)
         for_training: Whether data is for training (True) or evaluation (False)
+        add_sentiment: Whether to add sentiment data (overrides config)
 
     Returns:
         Dictionary of processed data with technical indicators
@@ -34,6 +36,10 @@ def fetch_data(
     # Use provided parameters or fall back to config values
     symbols = symbols or config.symbols
     interval = interval or config.interval
+
+    # Use provided sentiment setting or fall back to config
+    if add_sentiment is None:
+        add_sentiment = getattr(config, "use_sentiment", False)
 
     # Choose appropriate lookback period based on whether we're training or evaluating
     if lookback_days is None:
@@ -83,7 +89,7 @@ def fetch_data(
         f"{Fore.CYAN}📊 Adding technical indicators and normalizing features...{Style.RESET_ALL}"
     )
     enhanced_data, combined_df = prepare_multi_asset_dataset(
-        data_dict, add_indicators=True
+        data_dict, add_indicators=True, add_sentiment=add_sentiment
     )
 
     # Print summary of the data
@@ -110,5 +116,17 @@ def fetch_data(
         norm_cols = [col for col in df.columns if col.endswith("_norm")]
         if norm_cols:
             print(f"  - Normalized features include: {', '.join(norm_cols[:5])}...")
+
+        # Print sentiment indicators if available
+        sentiment_cols = [
+            col
+            for col in df.columns
+            if any(
+                s in col
+                for s in ["sentiment", "social", "github", "dev_activity", "exchange"]
+            )
+        ]
+        if sentiment_cols:
+            print(f"  - Sentiment features include: {', '.join(sentiment_cols[:5])}...")
 
     return enhanced_data

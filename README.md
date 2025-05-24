@@ -12,6 +12,7 @@ This project applies reinforcement learning techniques to cryptocurrency trading
 - Gymnasium for RL environments
 - SSH key for Binance API authentication (optional)
 - Weights & Biases for experiment tracking (optional)
+- Santiment API for sentiment analysis (optional)
 
 You can install all dependencies with:
 
@@ -21,7 +22,7 @@ pip install -r requirements.txt
 
 ## Cryptocurrency Trading Implementation
 
-This project implements a Proximal Policy Optimization (PPO) agent for cryptocurrency trading. The agent learns to make optimal trading decisions based on historical price data and technical indicators.
+This project implements a Proximal Policy Optimization (PPO) agent for cryptocurrency trading. The agent learns to make optimal trading decisions based on historical price data, technical indicators, and sentiment analysis.
 
 ### Running the Trading Agent
 
@@ -67,6 +68,12 @@ python main.py --episodes 10
 # Specify initial crypto allocation for evaluation (0.0 to 1.0)
 python main.py --initial_allocation 0.5
 
+# Enable sentiment analysis (requires Santiment API key)
+python main.py --sentiment
+
+# Disable sentiment analysis
+python main.py --no_sentiment
+
 # Disable hardware optimization
 python main.py --no_optimize
 
@@ -87,6 +94,7 @@ python main.py --testnet
 - **Multi-Asset Support**: Support for training and evaluating on multiple cryptocurrencies
 - **Configurable Parameters**: Comprehensive configuration system through `config.py`
 - **Technical Indicators**: Automated calculation of technical indicators as features
+- **Sentiment Analysis**: Integration with Santiment API for social and market sentiment data
 - **Evaluation Framework**: Comparison with baseline strategies (Random, Buy & Hold)
 - **Hardware Optimization**: Automatic GPU utilization and mixed precision training
 - **Flexible Evaluation**: Options to evaluate on specific, random, or all available symbols
@@ -96,25 +104,30 @@ python main.py --testnet
 
 The project is compatible with Python 3.10 or higher. Make sure you have all the required dependencies installed.
 
-### Visualization
+## Sentiment Analysis with Santiment
 
-To visualize the technical indicators:
+The project integrates with the Santiment API to incorporate sentiment and social metrics into the trading model. This provides the agent with additional context beyond just price data and technical indicators.
 
-```bash
-# Visualize a specific cryptocurrency
-python visualize_indicators.py --symbol BTCUSDT
+### Setting Up Santiment API
 
-# Visualize a specific cryptocurrency with a custom timeframe (days)
-python visualize_indicators.py --symbol ETHUSDT --days 3
-```
+1. Create an account at [Santiment](https://santiment.net/)
+2. Get your API key from the dashboard
+3. Add the API key to your `config.env` file:
+   ```
+   SANTIMENT_API_KEY=your_api_key_here
+   ```
 
-This will generate a PNG file showing the selected cryptocurrency with all technical indicators, including:
+### Available Sentiment Metrics
 
-- Price chart with SMA, EMA, and Bollinger Bands
-- Volume with SMA
-- RSI and Stochastic oscillators
-- MACD
-- ATR (Average True Range) and Z-Score
+The system collects the following metrics from Santiment:
+
+- **Twitter Sentiment**: Overall sentiment of Twitter discussions about each cryptocurrency
+- **Social Volume**: Amount of social media discussion about each cryptocurrency
+- **Social Dominance**: Share of discussions relative to other cryptocurrencies
+- **Developer Activity**: Code commit activity in GitHub repositories
+- **Exchange Flow**: Cryptocurrency moving in and out of exchanges
+
+These metrics are normalized and added as features to the agent's observation space.
 
 ## Project Structure
 
@@ -135,6 +148,7 @@ This will generate a PNG file showing the selected cryptocurrency with all techn
 - **Data Processing:**
 
   - `utils.py` - Utility functions including data fetching and processing
+  - `santiment_api.py` - Functions for fetching and processing sentiment data
 
 - **Configuration:**
   - `config.py` - Centralized configuration system for the trading agent
@@ -156,6 +170,7 @@ The configuration includes settings for:
 - **Environment Parameters**: Game length, window size, commission rates
 - **Training Settings**: Episodes, epochs, steps per epoch
 - **Evaluation Settings**: Number of episodes, initial balance
+- **Sentiment Analysis**: API key, enabled metrics
 - **Experiment Tracking**: W&B project and team settings
 
 ## Features
@@ -163,6 +178,7 @@ The configuration includes settings for:
 - Fetch real-time cryptocurrency price data from Binance
 - Retrieve historical candlestick (OHLCV) data for multiple major cryptocurrencies
 - Calculate over 30 technical indicators for market analysis
+- Incorporate sentiment and social metrics from Santiment API
 - Normalize data for machine learning applications
 - Visualize price data with technical indicators
 - Train RL agents to detect potential market inefficiencies and execute trades
@@ -174,8 +190,9 @@ The configuration includes settings for:
 This project aims to develop RL agents that can:
 
 1. **Detect Market Inefficiencies**: Use technical indicators to identify potential trading opportunities
-2. **Learn Optimal Strategies**: Optimize entry/exit points and position sizing
-3. **Adapt to Market Conditions**: Dynamically adjust to changing market regimes
+2. **Analyze Sentiment**: Incorporate social and developer metrics to gauge market mood
+3. **Learn Optimal Strategies**: Optimize entry/exit points and position sizing
+4. **Adapt to Market Conditions**: Dynamically adjust to changing market regimes
 
 The RL environment is built on top of the data processing pipeline, using preprocessed and normalized technical indicators as input features.
 
