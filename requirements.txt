@@ -13,3 +13,4 @@ wandb>=0.15.0
 colorama>=0.4.6
 gql>=3.4.0
 python-dateutil>=2.8.2
+requests-toolbelt>=1.0.0

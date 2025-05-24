@@ -19,6 +19,7 @@ try:
         fetch_santiment_data,
         merge_sentiment_with_price,
         normalize_sentiment_features,
+        ensure_consistent_sentiment_features,
     )
 
     SANTIMENT_AVAILABLE = True
@@ -68,7 +69,20 @@ def fetch_and_cache_klines(
     current_end = end_time
 
     # Calculate approximately how many API calls we'll need
-    estimated_calls = (end_time - start_time) // (limit * 60 * 1000) + 1
+    # Convert interval to milliseconds
+    interval_ms = 60 * 1000  # Default for 1m interval
+    if interval == "1h":
+        interval_ms = 60 * 60 * 1000  # 1 hour in milliseconds
+    elif interval == "1m":
+        interval_ms = 60 * 1000  # 1 minute in milliseconds
+    elif interval == "5m":
+        interval_ms = 5 * 60 * 1000  # 5 minutes in milliseconds
+    elif interval == "15m":
+        interval_ms = 15 * 60 * 1000  # 15 minutes in milliseconds
+    elif interval == "1d":
+        interval_ms = 24 * 60 * 60 * 1000  # 1 day in milliseconds
+
+    estimated_calls = (end_time - start_time) // (limit * interval_ms) + 1
 
     # Create progress bar
     pbar = tqdm(total=estimated_calls, desc=f"Fetching {symbol}", unit="batch")
@@ -267,6 +281,7 @@ def prepare_multi_asset_dataset(
     data_dict: Dict[str, pd.DataFrame],
     add_indicators: bool = True,
     add_sentiment: bool = True,
+    force_refresh: bool = False,
 ) -> Tuple[Dict[str, pd.DataFrame], pd.DataFrame]:
     """
     Prepare a multi-asset dataset suitable for RL training.
@@ -275,6 +290,7 @@ def prepare_multi_asset_dataset(
         data_dict: Dictionary mapping symbols to DataFrames
         add_indicators: Whether to add basic technical indicators
         add_sentiment: Whether to add sentiment data from Santiment API
+        force_refresh: Whether to force refresh sentiment data
 
     Returns:
         Tuple containing:
@@ -320,8 +336,14 @@ def prepare_multi_asset_dataset(
                 )
                 end_date = df_enhanced["open_time"].max().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-                # Fetch sentiment data
-                sentiment_metrics = fetch_santiment_data(symbol, start_date, end_date)
+                # Fetch sentiment data with caching support
+                sentiment_metrics = fetch_santiment_data(
+                    symbol,
+                    start_date,
+                    end_date,
+                    force_refresh=force_refresh,
+                    cache_hours=24,  # Cache for 24 hours by default
+                )
 
                 if sentiment_metrics:
                     # Merge sentiment data with price data
@@ -338,6 +360,14 @@ def prepare_multi_asset_dataset(
             except Exception as e:
                 print(f"⚠️ Error adding sentiment data for {symbol}: {str(e)}")
                 print("Continuing without sentiment data for this symbol.")
+
+        # Always ensure consistent sentiment features across all symbols
+        # This prevents observation space dimension mismatches
+        if add_sentiment:
+            df_enhanced = ensure_consistent_sentiment_features(df_enhanced)
+            print(
+                f"✅ Ensured consistent sentiment features for {symbol} (shape: {df_enhanced.shape})"
+            )
 
         # Drop any rows with NaN values (first row will have NaN returns)
         df_enhanced = df_enhanced.dropna()

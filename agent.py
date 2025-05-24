@@ -208,15 +208,6 @@ class PPOAgent:
             clip_epsilon = config.clip_epsilon
             learning_rate = config.learning_rate
 
-            # Use larger hidden dimension for large batch sizes
-            if hasattr(config, "batch_size") and config.batch_size >= 1024:
-                # Scale up hidden dim for large batch sizes to better utilize GPU
-                if hidden_dim < 768:  # Only scale up if not already large
-                    hidden_dim = max(hidden_dim, 768)  # At least 768 for large batches
-                    print(
-                        f"Increasing network size to hidden_dim={hidden_dim} for better GPU utilization"
-                    )
-
             # Adjust gradient clipping threshold based on batch size
             if hasattr(config, "clip_grad_norm"):
                 # Use explicitly configured value if available
@@ -365,7 +356,7 @@ class PPOAgent:
             self.profiler.start("env_creation")
 
         env_fns = [env_fn for _ in range(n_envs)]
-        envs = AsyncVectorEnv(env_fns)
+        envs = AsyncVectorEnv(env_fns, observation_mode="different")
 
         if self.enable_profiling:
             self.profiler.stop("env_creation")
@@ -649,7 +640,7 @@ class PPOAgent:
 
         # Original CPU implementation for multiple environments
         env_fns = [env_fn for _ in range(n_envs)]
-        envs = AsyncVectorEnv(env_fns)
+        envs = AsyncVectorEnv(env_fns, observation_mode="different")
 
         # Initialize storage
         total_steps = n_envs * steps_per_env

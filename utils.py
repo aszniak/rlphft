@@ -89,7 +89,10 @@ def fetch_data(
         f"{Fore.CYAN}📊 Adding technical indicators and normalizing features...{Style.RESET_ALL}"
     )
     enhanced_data, combined_df = prepare_multi_asset_dataset(
-        data_dict, add_indicators=True, add_sentiment=add_sentiment
+        data_dict,
+        add_indicators=True,
+        add_sentiment=add_sentiment,
+        force_refresh=force_refresh,
     )
 
     # Print summary of the data

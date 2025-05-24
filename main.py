@@ -162,6 +162,8 @@ def main():
         config.symbols = args.symbols
     if args.lookback_days:
         config.training_lookback_days = args.lookback_days
+        # Also apply to evaluation lookback for longer evaluations
+        config.eval_lookback_days = args.lookback_days
     if args.force_refresh:
         config.force_refresh = args.force_refresh
     if args.epochs:

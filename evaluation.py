@@ -5,7 +5,7 @@ import wandb
 from tqdm import tqdm
 import colorama
 from colorama import Fore, Style
-import gym
+import gymnasium as gym
 
 from trading_env import TradingEnv, BuyAndHoldEnv, TradingAction
 from agent import PPOAgent, RandomAgent
@@ -53,8 +53,20 @@ def evaluate_agents(
 
     # Calculate total dataset length for progress reporting
     dataset_length = len(data_dict[symbol]) - config.window_size
+
+    # Calculate days based on the actual interval
+    if config.interval == "1h":
+        hours_per_day = 24
+        days_approx = dataset_length / hours_per_day
+    elif config.interval == "1m":
+        minutes_per_day = 1440
+        days_approx = dataset_length / minutes_per_day
+    else:
+        # Default fallback
+        days_approx = dataset_length / 24  # Assume hourly
+
     print(
-        f"Full dataset evaluation: {dataset_length} steps (approx. {dataset_length/1440:.1f} days)"
+        f"Full dataset evaluation: {dataset_length} steps (approx. {days_approx:.1f} days)"
     )
 
     # Creating new environment for evaluation with appropriate state_dim
@@ -103,7 +115,7 @@ def evaluate_agents(
         window_size=config.window_size,
         commission_rate=config.commission_rate,
         random_start=False,
-        full_data_evaluation=True,  # Evaluation mode uses full dataset
+        full_data_evaluation=True,
     )
 
     # Load or use trained agent
