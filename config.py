@@ -12,9 +12,9 @@ class Config:
     """Central configuration for the trading agent system"""
 
     # W&B settings
-    wandb_project: str = "crypto-trading-rl"
-    wandb_team: str = "aszczesniak-aszczesniak"
     use_wandb: bool = False
+    wandb_project: str = os.getenv("WANDB_PROJECT", "")
+    wandb_team: str = os.getenv("WANDB_TEAM", "")
 
     # API settings
     api_key: str = os.getenv("BINANCE_API_KEY", "")

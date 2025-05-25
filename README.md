@@ -1,215 +1,266 @@
-# Reinforcement Learning Powered High Frequency Trading
+# Reinforcement Learning Powered Cryptocurrency Trading
 
-This project applies reinforcement learning techniques to cryptocurrency trading using Binance market data.
+This project applies reinforcement learning techniques to cryptocurrency trading using Binance market data. The system implements a Proximal Policy Optimization (PPO) agent that learns to make optimal trading decisions based on historical price data, technical indicators, and sentiment analysis.
 
-## Prerequisites
+![Training Progress](./images/training.png)
 
-### Trading Components
+## 🚀 Features
+
+- **Reinforcement Learning Trading**: PPO agent optimized for cryptocurrency trading
+- **Multi-Asset Support**: Trade multiple cryptocurrencies (BTC, ETH, SOL, BNB, XRP)
+- **Technical Analysis**: 30+ technical indicators including SMA, EMA, RSI, MACD, Bollinger Bands
+- **Sentiment Analysis**: Integration with Santiment API for social and market sentiment data
+- **Performance Tracking**: Weights & Biases integration for experiment tracking
+- **Hardware Optimization**: GPU acceleration and mixed precision training
+- **Comprehensive Evaluation**: Compare against random and buy-and-hold strategies
+- **Flexible Configuration**: Centralized configuration system with environment overrides
+
+![Weights & Biases Dashboard](./images/wandb.png)
+
+## 📋 Prerequisites
 
 - Python 3.10 or higher
-- Requests, NumPy, Pandas, Matplotlib
-- PyTorch for reinforcement learning models
-- Gymnasium for RL environments
-- SSH key for Binance API authentication (optional)
-- Weights & Biases for experiment tracking (optional)
-- Santiment API for sentiment analysis (optional)
+- CUDA-compatible GPU (optional, for accelerated training)
+- Binance API access (optional, for live data)
+- Santiment API key (optional, for sentiment analysis)
+- Weights & Biases account (optional, for experiment tracking)
 
-You can install all dependencies with:
+## 🛠️ Installation
+
+1. Clone the repository:
+
+```bash
+git clone <repository-url>
+cd rlphft
+```
+
+2. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Cryptocurrency Trading Implementation
-
-This project implements a Proximal Policy Optimization (PPO) agent for cryptocurrency trading. The agent learns to make optimal trading decisions based on historical price data, technical indicators, and sentiment analysis.
-
-### Running the Trading Agent
-
-To run the cryptocurrency trading system:
+3. Configure API keys (optional):
 
 ```bash
-# Run with default settings (will load saved model if available)
-python main.py
-
-# Train the model with multiple symbols
-python main.py --symbols BTCUSDT ETHUSDT SOLUSDT --train
-
-# Force training a new model even if one exists
-python main.py --train
-
-# Use fast training mode (fewer epochs for quick iterations)
-python main.py --train --fast_train
-
-# Use full training mode (more epochs for complete training)
-python main.py --train --full_train
-
-# Specify the number of days of historical data to use
-python main.py --lookback_days 60
-
-# Force refresh of data cache
-python main.py --force_refresh
-
-# Evaluate the model (loads existing model if available)
-python main.py --evaluate
-
-# Evaluate on a specific symbol
-python main.py --eval_symbol ETHUSDT
-
-# Evaluate on a random symbol
-python main.py --eval_random
-
-# Evaluate on all available symbols
-python main.py --eval_all
-
-# Set number of evaluation episodes
-python main.py --episodes 10
-
-# Specify initial crypto allocation for evaluation (0.0 to 1.0)
-python main.py --initial_allocation 0.5
-
-# Enable sentiment analysis (requires Santiment API key)
-python main.py --sentiment
-
-# Disable sentiment analysis
-python main.py --no_sentiment
-
-# Disable hardware optimization
-python main.py --no_optimize
-
-# Disable mixed precision training
-python main.py --no_mixed_precision
-
-# Enable Weights & Biases tracking
-python main.py --wandb
-
-# Test with Binance testnet (requires API setup)
-python main.py --testnet
+cp config.env.example config.env
+# Edit config.env with your API keys
 ```
 
-### Features of the Trading Implementation
+## 🏃 Quick Start
 
-- **Trading Environment**: A Gymnasium-compatible environment simulating cryptocurrency trading
-- **PPO Agent**: Implementation of the PPO algorithm for trading optimization
-- **Multi-Asset Support**: Support for training and evaluating on multiple cryptocurrencies
-- **Configurable Parameters**: Comprehensive configuration system through `config.py`
-- **Technical Indicators**: Automated calculation of technical indicators as features
-- **Sentiment Analysis**: Integration with Santiment API for social and market sentiment data
-- **Evaluation Framework**: Comparison with baseline strategies (Random, Buy & Hold)
-- **Hardware Optimization**: Automatic GPU utilization and mixed precision training
-- **Flexible Evaluation**: Options to evaluate on specific, random, or all available symbols
-- **W&B Integration**: Optional tracking of training/evaluation metrics with Weights & Biases
+### Basic Usage
 
-## Python Setup
+```bash
+# Run with default settings (loads pre-trained model if available)
+python3 main.py
 
-The project is compatible with Python 3.10 or higher. Make sure you have all the required dependencies installed.
+# Train a new model
+python3 main.py --train
 
-## Sentiment Analysis with Santiment
+# Evaluate the model
+python3 main.py --evaluate
+```
 
-The project integrates with the Santiment API to incorporate sentiment and social metrics into the trading model. This provides the agent with additional context beyond just price data and technical indicators.
+### Training Options
 
-### Setting Up Santiment API
+```bash
+# Train on specific cryptocurrencies
+python3 main.py --symbols BTCUSDT ETHUSDT SOLUSDT --train
 
-1. Create an account at [Santiment](https://santiment.net/)
-2. Get your API key from the dashboard
-3. Add the API key to your `config.env` file:
-   ```
-   SANTIMENT_API_KEY=your_api_key_here
-   ```
+# Fast training mode (fewer epochs for quick iterations)
+python3 main.py --train --fast_train
 
-### Available Sentiment Metrics
+# Full training mode (complete training for best results)
+python3 main.py --train --full_train
 
-The system collects the following metrics from Santiment:
+# Use specific amount of historical data
+python3 main.py --lookback_days 365 --train
 
-- **Twitter Sentiment**: Overall sentiment of Twitter discussions about each cryptocurrency
-- **Social Volume**: Amount of social media discussion about each cryptocurrency
-- **Social Dominance**: Share of discussions relative to other cryptocurrencies
-- **Developer Activity**: Code commit activity in GitHub repositories
-- **Exchange Flow**: Cryptocurrency moving in and out of exchanges
+# Enable hardware optimization and mixed precision
+python3 main.py --train --optimize --mixed_precision
+```
 
-These metrics are normalized and added as features to the agent's observation space.
+### Evaluation Options
 
-## Project Structure
+```bash
+# Evaluate on a specific symbol
+python3 main.py --eval_symbol ETHUSDT
 
-- **Main Scripts:**
+# Evaluate on a random symbol
+python3 main.py --eval_random
 
-  - `main.py` - Main script for cryptocurrency trading with RL
+# Evaluate on all available symbols
+python3 main.py --eval_all
 
-- **Agents and Environments:**
+# Set number of evaluation episodes
+python3 main.py --episodes 10
 
-  - `agent.py` - Implementation of the PPO and Random agents
-  - `trading_env.py` - Gymnasium-compatible trading environment with TradingEnv and BuyAndHoldEnv
+# Specify initial crypto allocation (0.0 to 1.0)
+python3 main.py --initial_allocation 0.5
+```
 
-- **Training and Evaluation:**
+### Advanced Features
 
-  - `training.py` - Functions for training the RL agent
-  - `evaluation.py` - Functions for evaluating agents and testing with Binance
+```bash
+# Enable sentiment analysis (requires Santiment API key)
+python3 main.py --sentiment
 
-- **Data Processing:**
+# Enable Weights & Biases tracking
+python3 main.py --wandb
 
-  - `utils.py` - Utility functions including data fetching and processing
-  - `santiment_api.py` - Functions for fetching and processing sentiment data
+# Force refresh of cached data
+python3 main.py --force_refresh
 
-- **Configuration:**
-  - `config.py` - Centralized configuration system for the trading agent
-  - `config.env` - Environment variables and API keys (gitignored)
-  - `requirements.txt` - List of required Python packages
+# Test with Binance testnet (requires API setup)
+python3 main.py --testnet
+```
 
-## Configuration System
+## 📊 Performance
 
-The project uses a centralized configuration system in `config.py` that allows for:
+The RL agent has been trained on multiple cryptocurrency pairs with varying market conditions. Key performance metrics include:
 
-- **Default Configuration**: Sensible defaults for all parameters
-- **Environment Overrides**: Load values from `config.env` file
-- **Command Line Arguments**: Override configuration via command line
-- **Runtime Modifications**: Programmatically modify configuration as needed
+- **Training Environment**: 1-week episodes with 1-hour candles
+- **State Space**: Technical indicators + sentiment data + portfolio state
+- **Action Space**: 5 discrete actions (hold, buy/sell at different percentages)
+- **Reward Function**: Portfolio value change with transaction cost penalties
 
-The configuration includes settings for:
+## 🔧 Configuration
 
-- **Data Fetching**: Trading symbols, timeframes, lookback periods
-- **Environment Parameters**: Game length, window size, commission rates
-- **Training Settings**: Episodes, epochs, steps per epoch
-- **Evaluation Settings**: Number of episodes, initial balance
-- **Sentiment Analysis**: API key, enabled metrics
-- **Experiment Tracking**: W&B project and team settings
+The project uses a centralized configuration system in `config.py` with the following hierarchy:
 
-## Features
+1. **Default values** in `Config` class
+2. **Environment variables** from `config.env` file
+3. **Command line arguments** override both
 
-- Fetch real-time cryptocurrency price data from Binance
-- Retrieve historical candlestick (OHLCV) data for multiple major cryptocurrencies
-- Calculate over 30 technical indicators for market analysis
-- Incorporate sentiment and social metrics from Santiment API
-- Normalize data for machine learning applications
-- Visualize price data with technical indicators
-- Train RL agents to detect potential market inefficiencies and execute trades
-- Evaluate trading strategies against baselines
-- Track experiments with W&B (optional)
+### Key Configuration Options
 
-## Reinforcement Learning Approach
+- **Trading Parameters**: Symbols, timeframes, commission rates
+- **Training Settings**: Epochs, batch size, learning rate, model architecture
+- **Environment Setup**: Episode length, observation window, initial balance
+- **API Integration**: Binance and Santiment API keys
+- **Hardware Settings**: GPU optimization, mixed precision training
 
-This project aims to develop RL agents that can:
+### Setting Up API Keys
 
-1. **Detect Market Inefficiencies**: Use technical indicators to identify potential trading opportunities
-2. **Analyze Sentiment**: Incorporate social and developer metrics to gauge market mood
-3. **Learn Optimal Strategies**: Optimize entry/exit points and position sizing
-4. **Adapt to Market Conditions**: Dynamically adjust to changing market regimes
+Create a `config.env` file (copy from `config.env.example`):
 
-The RL environment is built on top of the data processing pipeline, using preprocessed and normalized technical indicators as input features.
+```bash
+# Binance API configuration
+BINANCE_API_KEY=your_binance_api_key_here
 
-## Authentication
+# Santiment API key (for sentiment analysis)
+SANTIMENT_API_KEY=your_santiment_api_key_here
 
-This project uses SSH key-based authentication for Binance API access instead of traditional API key/secret pairs:
+# Weights & Biases (for experiment tracking)
+WANDB_PROJECT=your-project-name
+WANDB_TEAM=your-team-name
+```
 
-1. The system utilizes Ed25519 SSH keys for request signing
-2. The SSH key from `~/.ssh/id_ed25519` is used by default
-3. The API key is configured in the `config.env` file which is gitignored
+## 📁 Project Structure
 
-This approach provides enhanced security compared to standard API key/secret authentication methods.
+```
+├── main.py                    # Main entry point
+├── config.py                  # Configuration system
+├── config.env.example         # Example configuration file
+├── requirements.txt           # Python dependencies
+│
+├── agent.py                   # PPO agent implementation
+├── trading_env.py             # Trading environment (Gymnasium-compatible)
+├── training.py                # Training functions and utilities
+├── evaluation.py              # Evaluation and backtesting
+│
+├── data_fetcher.py            # Binance data fetching
+├── santiment_api.py           # Sentiment data from Santiment
+├── technical_indicators.py    # Technical analysis indicators
+├── utils.py                   # Utility functions
+├── visualization.py           # Data visualization tools
+│
+├── tools/                     # Additional tools and examples
+│   ├── cartpole.py           # CartPole RL example
+│   └── visualize_indicators.py # Technical indicator visualization
+│
+├── images/                    # Documentation images
+├── data_cache/               # Cached market and sentiment data
+└── saved_model_*.pt          # Pre-trained models
+```
 
-**Note:** The `config.env` file is included in `.gitignore` and should never be committed to the repository.
+## 🧠 Technical Approach
 
-## Notes
+### Reinforcement Learning
 
-- The code uses Binance's public API endpoints by default
-- The SSH key-signing method is implemented in the `binance_api.py` module
-- Generated image files are automatically excluded from git
+- **Algorithm**: Proximal Policy Optimization (PPO)
+- **Network Architecture**: Multi-layer perceptron with configurable hidden dimensions
+- **Training**: Parallel environments with GPU acceleration
+- **Exploration**: Entropy regularization for action space exploration
+
+### Feature Engineering
+
+1. **Technical Indicators**: Moving averages, momentum oscillators, volatility measures
+2. **Market Microstructure**: Volume, spread, and order book features
+3. **Sentiment Signals**: Social media sentiment, developer activity, exchange flows
+4. **Portfolio State**: Current allocation, performance metrics, position sizing
+
+### Environment Design
+
+- **State Space**: Normalized technical indicators + portfolio state
+- **Action Space**: Discrete actions for position management
+- **Reward Function**: Risk-adjusted returns with transaction cost penalties
+- **Episode Structure**: Weekly trading sessions with hourly decision points
+
+## 📈 Sentiment Analysis Integration
+
+The project integrates with Santiment's API to incorporate market sentiment data:
+
+### Available Metrics
+
+- **Social Sentiment**: Twitter sentiment analysis for cryptocurrencies
+- **Social Volume**: Discussion volume across social platforms
+- **Social Dominance**: Relative discussion share vs other assets
+- **Developer Activity**: GitHub commits and development metrics
+- **Exchange Flows**: On-chain transaction analysis
+
+### Setup
+
+1. Create account at [Santiment](https://santiment.net/)
+2. Get API key from dashboard
+3. Add to `config.env`: `SANTIMENT_API_KEY=your_key_here`
+4. Enable with `--sentiment` flag
+
+## 🔐 Security & Authentication
+
+### SSH Key Authentication
+
+The project uses Ed25519 SSH keys for Binance API authentication:
+
+- More secure than traditional API key/secret pairs
+- Uses key from `~/.ssh/id_ed25519` by default
+- API requests signed with cryptographic signatures
+
+### Data Privacy
+
+- All sensitive configuration in `config.env` (gitignored)
+- No hardcoded credentials in source code
+- Cached data contains only public market information
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## 📄 License
+
+This project is provided as-is for educational and research purposes. Please ensure compliance with exchange APIs' terms of service when using for trading.
+
+## ⚠️ Disclaimer
+
+This software is for educational purposes only. Cryptocurrency trading involves substantial risk of loss. Past performance does not guarantee future results. Use at your own risk.
+
+## 🔗 Related Tools
+
+- **CartPole Example**: `tools/cartpole.py` - Simple RL example for learning
+- **Indicator Visualization**: `tools/visualize_indicators.py` - Technical analysis charts
+- **Environment Testing**: `test_env.py` - Trading environment validation
