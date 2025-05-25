@@ -243,14 +243,6 @@ The project uses Ed25519 SSH keys for Binance API authentication:
 - No hardcoded credentials in source code
 - Cached data contains only public market information
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
 ## 📄 License
 
 This project is provided as-is for educational and research purposes. Please ensure compliance with exchange APIs' terms of service when using for trading.
